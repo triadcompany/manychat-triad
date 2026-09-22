@@ -1,1 +1,0 @@
-ALTER TABLE "instagram_funnel_rules" ADD COLUMN "public_reply" text;

@@ -17,7 +17,7 @@ import { requireOrgContext } from "@/server/session";
 // próprio gestor logado. Ver spec
 // docs/superpowers/specs/2026-09-21-funil-instagram-design.md.
 
-async function requirePlatformAdminOrg(): Promise<{ organizationId: string }> {
+export async function requirePlatformAdminOrg(): Promise<{ organizationId: string }> {
   const { organizationId, isPlatformAdmin } = await requireOrgContext();
   if (!isPlatformAdmin) throw new Error("Acesso restrito ao platform admin.");
   return { organizationId };

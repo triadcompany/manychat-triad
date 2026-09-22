@@ -1,33 +1,26 @@
-import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm/relations";
 import {
   type AnyPgColumn,
   boolean,
   check,
-  date,
-  index,
   integer,
   jsonb,
-  numeric,
   pgTable,
-  primaryKey,
   text,
   timestamp as pgTimestamp,
   unique,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
-// timestamptz que devolve string ISO (não Date) e numeric que devolve number —
-// mantém os mesmos tipos que o app já espera vindos do PostgREST/Supabase.
+// timestamptz que devolve string ISO (não Date) — mantém o mesmo tipo que o
+// resto do código já espera.
 function timestamp(name: string) {
   return pgTimestamp(name, { withTimezone: true, mode: "string" });
 }
-function numericMoney(name: string, precision: number, scale: number) {
-  return numeric(name, { precision, scale, mode: "number" });
-}
 
-// Unidade de isolamento multi-tenant — uma agência/empresa que assina o produto.
-// Todo dado do sistema pendura, direta ou indiretamente (via clients), numa organização.
+// Unidade de isolamento multi-tenant — uma empresa que assina o produto.
+// Todo dado do sistema pendura, direto ou indireto, numa organização.
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
@@ -35,17 +28,15 @@ export const organizations = pgTable("organizations", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-// Substitui auth.users do Supabase. Guarda credenciais próprias (bcrypt).
+// Credenciais próprias (bcrypt) — sem depender de provedor externo de auth.
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   // Acesso de suporte fora do conceito de organização — lista/entra em qualquer uma.
-  // Não faz parte de nenhuma organização por padrão (profiles.organizationId fica nulo).
   isPlatformAdmin: boolean("is_platform_admin").notNull().default(false),
-  // Desativado = login bloqueado. Usado pelo admin da organização pra remover
-  // acesso de um colega sem apagar o histórico (tarefas/campanhas criadas por ele).
+  // Desativado = login bloqueado.
   active: boolean("active").notNull().default(true),
 });
 
@@ -58,160 +49,14 @@ export const profiles = pgTable(
     fullName: text("full_name").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     role: text("role").notNull().default("member"),
-    // Nulo só pro platform admin puro (users.isPlatformAdmin), que não pertence a
-    // nenhuma organização. Todo outro usuário deve ter isso preenchido (garantido
-    // na aplicação, não no banco, pra permitir esse caso especial).
+    // Nulo só pro platform admin puro, que não pertence a nenhuma organização.
     organizationId: uuid("organization_id").references(() => organizations.id),
-    // Liga/desliga a varredura de sugestão de venda (automations-core.ts) pra
-    // esse gestor — só afeta os clientes de que ele é dono (clients.owner_user_id).
-    saleSuggestionsEnabled: boolean("sale_suggestions_enabled").notNull().default(true),
   },
   (t) => [check("profiles_role_check", sql`${t.role} IN ('admin', 'member')`)]
 );
 
-// Token de acesso à Meta Marketing API. Uma organização pode ter vários (um por
-// gestor de tráfego que tenha seu próprio acesso à Business Manager); cada
-// cliente aponta pra um específico (clients.metaTokenId).
-export const metaTokens = pgTable("meta_tokens", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  accessToken: text("access_token").notNull(),
-  expiresAt: timestamp("expires_at"),
-  assignedUserId: uuid("assigned_user_id").references(() => profiles.id, { onDelete: "set null" }),
-  active: boolean("active").notNull().default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-// Instância da Evolution API (um número de WhatsApp conectado). Uma organização
-// pode ter várias; cada mensagem agendada e cada cliente monitorado aponta pra uma.
-export const whatsappInstances = pgTable("whatsapp_instances", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  label: text("label").notNull(),
-  evolutionUrl: text("evolution_url").notNull(),
-  evolutionKey: text("evolution_key").notNull(),
-  instanceName: text("instance_name").notNull(),
-  assignedUserId: uuid("assigned_user_id").references(() => profiles.id, { onDelete: "set null" }),
-  active: boolean("active").notNull().default(true),
-  // Instância "oficial" do gestor pra automação — no máximo uma marcada por
-  // organização (garantido na hora de marcar, não por constraint). Sem
-  // nenhuma marcada, o fallback de automação cai na instância do gestor mais
-  // antiga (ver pickGestorWhatsappInstance em automations-core.ts).
-  isDefaultGestor: boolean("is_default_gestor").notNull().default(false),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  // Token pra link público de conexão (cliente escaneia o QR sem precisar logar
-  // no sistema) — nulo = nenhum link ativo no momento. Expira sozinho por tempo
-  // e é zerado assim que a instância conecta (ver connect.$token.tsx).
-  connectToken: text("connect_token").unique(),
-  connectTokenExpiresAt: timestamp("connect_token_expires_at"),
-});
-
-export const clients = pgTable("clients", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  metaAdAccountId: text("meta_ad_account_id").notNull().unique(),
-  metaPageId: text("meta_page_id"),
-  metaTokenId: uuid("meta_token_id").references(() => metaTokens.id, { onDelete: "set null" }),
-  segment: text("segment").notNull().default("popular"),
-  cplMin: numericMoney("cpl_min", 10, 2).notNull().default(6),
-  cplMax: numericMoney("cpl_max", 10, 2).notNull().default(12),
-  active: boolean("active").notNull().default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  metaBalance: integer("meta_balance"),
-  paymentMethod: text("payment_method").notNull().default("pix"),
-  metaWhatsappNumber: text("meta_whatsapp_number"),
-  monthlyBudget: numericMoney("monthly_budget", 10, 2).notNull().default(0),
-  pixCycle: text("pix_cycle"),
-  pixReferenceDay: integer("pix_reference_day"),
-  pixActive: boolean("pix_active").notNull().default(false),
-  whatsappGroupId: text("whatsapp_group_id"),
-  whatsappGroupName: text("whatsapp_group_name"),
-  whatsappInstanceId: uuid("whatsapp_instance_id").references(() => whatsappInstances.id, { onDelete: "set null" }),
-  // Gestor responsável — membro (role 'member') só vê clientes de que é dono;
-  // admin da organização vê todos. Nulo = "sem responsável" (só admin vê).
-  ownerUserId: uuid("owner_user_id").references(() => profiles.id, { onDelete: "set null" }),
-  updatedAt: timestamp("updated_at").defaultNow(),
-  // Checkpoint da varredura de sugestão de venda (automations-core.ts) — só
-  // processa mensagens do grupo mais novas que isso. Nulo = nunca escaneado.
-  lastSaleScanAt: timestamp("last_sale_scan_at"),
-  // Nome exato da etiqueta do WhatsApp que marca um lead como qualificado
-  // (dispara o evento de conversão pra Meta). Nulo = cliente não participa
-  // do rastreamento de qualificação (a atribuição de campanha continua ativa).
-  qualifiedLeadLabel: text("qualified_lead_label"),
-  // Dataset da Meta (criado no Events Manager, em "Business Messaging") pra
-  // onde o evento QualifiedLead é enviado via Conversions API. Sem isso
-  // configurado, a atribuição de campanha funciona mas o evento não é enviado.
-  metaCapiDatasetId: text("meta_capi_dataset_id"),
-  // Token da URL pública de rastreamento (/r/$token) que o próprio cliente
-  // (dono do negócio, não o gestor) usa pra ver os leads e marcar
-  // qualificado/venda sem precisar de login. Nulo = link nunca gerado.
-  publicTrackingToken: text("public_tracking_token").unique(),
-});
-
-export const metricsDaily = pgTable(
-  "metrics_daily",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    date: date("date").notNull(),
-    spend: numericMoney("spend", 10, 2).notNull().default(0),
-    leads: integer("leads").notNull().default(0),
-    cpl: numericMoney("cpl", 10, 2).generatedAlwaysAs(
-      sql`CASE WHEN leads > 0 THEN round(spend / leads::numeric, 2) ELSE NULL END`
-    ),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-    forms: integer("forms").notNull().default(0),
-  },
-  (t) => [
-    unique("metrics_daily_client_id_date_key").on(t.clientId, t.date),
-    index("idx_metrics_daily_client_date").on(t.clientId, t.date.desc()),
-  ]
-);
-
-export const campaignSnapshots = pgTable(
-  "campaign_snapshots",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    campaignId: text("campaign_id").notNull(),
-    name: text("name").notNull(),
-    status: text("status").notNull(),
-    dailyBudget: numericMoney("daily_budget", 10, 2),
-    spend: numericMoney("spend", 10, 2).notNull().default(0),
-    leads: integer("leads").notNull().default(0),
-    forms: integer("forms").notNull().default(0),
-    cpl: numericMoney("cpl", 10, 2),
-    impressions: integer("impressions").notNull().default(0),
-    clicks: integer("clicks").notNull().default(0),
-    syncedAt: timestamp("synced_at").defaultNow().notNull(),
-  },
-  (t) => [unique("campaign_snapshots_client_campaign_key").on(t.clientId, t.campaignId)]
-);
-
-export const syncLog = pgTable(
-  "sync_log",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id").references(() => clients.id, { onDelete: "set null" }),
-    syncedAt: timestamp("synced_at").defaultNow().notNull(),
-    status: text("status").notNull(),
-    message: text("message"),
-  },
-  (t) => [index("idx_sync_log_client").on(t.clientId, t.syncedAt.desc())]
-);
-
+// Configuração livre por organização (chave/valor) — hoje usada só pra
+// guardar a chave da API da OpenAI usada na classificação por IA do funil.
 export const appConfig = pgTable(
   "app_config",
   {
@@ -225,131 +70,7 @@ export const appConfig = pgTable(
   (t) => [unique("app_config_organization_id_key_key").on(t.organizationId, t.key)]
 );
 
-export const clientNotes = pgTable(
-  "client_notes",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    content: text("content").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  },
-  (t) => [index("idx_client_notes_client").on(t.clientId, t.createdAt.desc())]
-);
-
-export const reportLog = pgTable(
-  "report_log",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    periodType: text("period_type").notNull(),
-    periodStart: date("period_start").notNull(),
-    status: text("status").notNull().default("pendente"),
-    sentAt: timestamp("sent_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [
-    index("idx_report_log_client").on(t.clientId, t.createdAt.desc()),
-    index("idx_report_log_status").on(t.status, t.periodType),
-  ]
-);
-
-export const sales = pgTable(
-  "sales",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id),
-    date: date("date").notNull(),
-    value: numericMoney("value", 12, 2),
-    obs: text("obs"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [index("sales_client_id_idx").on(t.clientId), index("sales_date_idx").on(t.date)]
-);
-
-export const salesGoals = pgTable(
-  "sales_goals",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id),
-    month: text("month").notNull(),
-    goal: integer("goal").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [unique("sales_goals_client_id_month_key").on(t.clientId, t.month)]
-);
-
-// Sugestão de venda detectada por palavra-chave numa mensagem do grupo de
-// WhatsApp do cliente — nunca cria uma venda sozinha, o gestor confirma
-// (vira uma linha em `sales`) ou descarta.
-export const saleSuggestions = pgTable(
-  "sale_suggestions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    messageText: text("message_text").notNull(),
-    messageAt: timestamp("message_at").notNull(),
-    status: text("status").notNull().default("pending"), // pending | confirmed | dismissed
-    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [
-    unique("sale_suggestions_dedupe_key").on(t.clientId, t.messageAt, t.messageText),
-    index("idx_sale_suggestions_client_status").on(t.clientId, t.status),
-  ]
-);
-
-// Atribuição de leads do WhatsApp a campanha/conjunto/anúncio de origem
-// (via ctwa_clid capturado na primeira mensagem de conversas Click-to-WhatsApp)
-// e acompanhamento da qualificação (etiqueta no WhatsApp -> evento pra Meta).
-export const metaLeadAttributions = pgTable(
-  "meta_lead_attributions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    remoteJid: text("remote_jid").notNull(),
-    contactName: text("contact_name"),
-    leadEmail: text("lead_email"),
-    ctwaClid: text("ctwa_clid").notNull(),
-    adId: text("ad_id").notNull(),
-    adName: text("ad_name"),
-    adsetId: text("adset_id"),
-    adsetName: text("adset_name"),
-    campaignId: text("campaign_id"),
-    campaignName: text("campaign_name"),
-    firstMessageAt: timestamp("first_message_at").notNull(),
-    status: text("status").notNull().default("pending"), // pending | qualified | conversion_sent | conversion_failed
-    qualifiedAt: timestamp("qualified_at"),
-    labelName: text("label_name"),
-    conversionSentAt: timestamp("conversion_sent_at"),
-    conversionError: text("conversion_error"),
-    // Venda — independente do status de qualificação acima (um lead pode virar
-    // venda sem nunca ter sido marcado qualificado, ou vice-versa).
-    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
-    purchaseEventSentAt: timestamp("purchase_event_sent_at"),
-    purchaseEventError: text("purchase_event_error"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [
-    unique("meta_lead_attributions_dedupe_key").on(t.clientId, t.remoteJid, t.firstMessageAt),
-    index("idx_meta_lead_attributions_client_status").on(t.clientId, t.status),
-  ]
-);
-
-// ── Funil de vendas via Instagram (ferramenta interna, só da Triad Company —
-// não é multi-tenant, gerenciada atrás de requirePlatformAdmin) ────────────
+// ── Funil de vendas via Instagram ───────────────────────────────────────
 // Comentário com palavra-chave num post específico dispara resposta privada
 // automática no Direct via Instagram Messaging API.
 
@@ -375,9 +96,8 @@ export const instagramFunnelRules = pgTable("instagram_funnel_rules", {
   postPermalink: text("post_permalink"),
   keyword: text("keyword").notNull(), // comparação: contém, case-insensitive
   message: text("message").notNull(),
-  // Opcional — resposta pública embaixo do comentário (ex: "Te mandei no
-  // Direct!"), além do DM privado. Exige a permissão
-  // instagram_business_manage_comments, que o DM sozinho não precisa.
+  // Opcional — resposta pública embaixo do comentário, além do DM privado.
+  // Exige a permissão instagram_business_manage_comments.
   publicReply: text("public_reply"),
   // Opcional — funil visual (instagram_funnels) que continua depois da 1ª
   // mensagem. set null: apagar o funil não apaga a regra, só desconecta.
@@ -409,9 +129,7 @@ export const instagramFunnelLeads = pgTable(
 );
 
 // Funil visual (editor de blocos conectáveis) — continua a conversa no
-// Direct depois da 1ª mensagem de uma regra. Ver spec
-// docs/superpowers/specs/2026-09-21-funil-visual-instagram-design.md.
-
+// Direct depois da 1ª mensagem de uma regra.
 export const instagramFunnels = pgTable("instagram_funnels", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id")
@@ -431,9 +149,7 @@ export const instagramFunnelNodes = pgTable("instagram_funnel_nodes", {
   positionY: integer("position_y").notNull().default(0),
   message: text("message"), // só type='message'
   // Anexo opcional (ex: PDF) num bloco type='message' — a Meta exige URL
-  // pública pra mandar anexo, não aceita base64 direto; guardamos o arquivo
-  // aqui e servimos via rota pública própria (instagram-files.route.ts),
-  // igual scheduled_message_media já guarda mídia do WhatsApp.
+  // pública pra mandar anexo, servimos via rota própria (instagram-files.route.ts).
   fileBase64: text("file_base64"),
   fileMimetype: text("file_mimetype"),
   fileFilename: text("file_filename"),
@@ -441,10 +157,8 @@ export const instagramFunnelNodes = pgTable("instagram_funnel_nodes", {
   // saída (fora a saída fixa "Nenhuma bateu", que não precisa de linha própria)
   conditionKeywords: jsonb("condition_keywords").notNull().default([]),
   // só type='condition' — em vez de "contém a palavra" literal, manda a
-  // resposta da pessoa pro GPT (chave OpenAI já configurada em
-  // Configurações) escolher qual palavra-chave melhor representa a
-  // intenção. Cai pro casamento literal se a chave não estiver configurada
-  // ou a chamada falhar.
+  // resposta da pessoa pro GPT (chave OpenAI configurada em Configurações)
+  // escolher qual palavra-chave melhor representa a intenção.
   conditionUseAi: boolean("condition_use_ai").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -501,415 +215,35 @@ export const instagramFunnelSessions = pgTable(
   ]
 );
 
-export const tags = pgTable("tags", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("blue"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const clientTags = pgTable(
-  "client_tags",
-  {
-    clientId: uuid("client_id")
-      .notNull()
-      .references(() => clients.id, { onDelete: "cascade" }),
-    tagId: uuid("tag_id")
-      .notNull()
-      .references(() => tags.id, { onDelete: "cascade" }),
-  },
-  (t) => [primaryKey({ columns: [t.clientId, t.tagId] })]
-);
-
-export const conversationTemplates = pgTable("conversation_templates", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  clientId: uuid("client_id").references(() => clients.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  greeting: text("greeting"),
-  preMessage: text("pre_message"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const tasks = pgTable("tasks", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  status: text("status").notNull().default("pendente"),
-  dueDate: date("due_date"),
-  clientId: uuid("client_id").references(() => clients.id, { onDelete: "set null" }),
-  assignedTo: uuid("assigned_to").references(() => profiles.id, { onDelete: "set null" }),
-  createdBy: uuid("created_by").references(() => profiles.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const agentConversations = pgTable("agent_conversations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  title: text("title"),
-  mode: text("mode").notNull().default("trafego"),
-  pinned: boolean("pinned").notNull().default(false),
-  createdBy: uuid("created_by").references(() => profiles.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  lastMsgAt: timestamp("last_msg_at").defaultNow().notNull(),
-});
-
-export const agentMessages = pgTable("agent_messages", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  conversationId: uuid("conversation_id")
-    .notNull()
-    .references(() => agentConversations.id, { onDelete: "cascade" }),
-  role: text("role").notNull(),
-  content: text("content"),
-  toolCalls: jsonb("tool_calls"),
-  toolResults: jsonb("tool_results"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const googleCalendarTokens = pgTable("google_calendar_tokens", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id")
-    .notNull()
-    .unique()
-    .references(() => users.id, { onDelete: "cascade" }),
-  accessToken: text("access_token").notNull(),
-  refreshToken: text("refresh_token"),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const n8nJobs = pgTable("n8n_jobs", {
-  id: uuid("id").primaryKey(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  status: text("status").notNull().default("pending"),
-  payload: jsonb("payload"),
-  campaignId: text("campaign_id"),
-  adId: text("ad_id"),
-  errorMessage: text("error_message"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const driveUploads = pgTable("drive_uploads", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  fileId: text("file_id"),
-  carName: text("car_name"),
-  folders: jsonb("folders").notNull(),
-  status: text("status").default("aguardando"),
-  folderId: text("folder_id"),
-  createdAt: timestamp("created_at").defaultNow(),
-  pastaClienteId: text("pasta_cliente_id"),
-  pastaClienteNome: text("pasta_cliente_nome"),
-  messageId: text("message_id"),
-  remoteJid: text("remote_jid"),
-  mediaUrl: text("media_url"),
-  mediaBase64: text("media_base64"),
-});
-
-export const scheduledMessages = pgTable("scheduled_messages", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  whatsappInstanceId: uuid("whatsapp_instance_id").references(() => whatsappInstances.id, { onDelete: "set null" }),
-  body: text("body").notNull(),
-  // Colunas legadas — mensagens criadas antes de suportar múltiplas mídias
-  // (scheduled_message_media). Mantidas só pra não quebrar histórico antigo.
-  mediaBase64: text("media_base64"),
-  mediaMimetype: text("media_mimetype"),
-  mediaFilename: text("media_filename"),
-  scheduledAt: timestamp("scheduled_at").notNull(),
-  status: text("status").notNull().default("pending"), // pending | sent | partial | failed | canceled
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const scheduledMessageMedia = pgTable("scheduled_message_media", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  messageId: uuid("message_id").notNull().references(() => scheduledMessages.id, { onDelete: "cascade" }),
-  base64: text("base64").notNull(),
-  mimetype: text("mimetype").notNull(),
-  filename: text("filename").notNull(),
-  sortOrder: integer("sort_order").notNull().default(0),
-});
-
-export const scheduledMessageRecipients = pgTable("scheduled_message_recipients", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  messageId: uuid("message_id").notNull().references(() => scheduledMessages.id, { onDelete: "cascade" }),
-  remoteJid: text("remote_jid").notNull(),
-  name: text("name").notNull(),
-  status: text("status").notNull().default("pending"), // pending | sent | failed
-  sentAt: timestamp("sent_at"),
-  errorMessage: text("error_message"),
-});
-
-// Modelo de texto reutilizável pro relatório de métricas — corpo com
-// placeholders {{variavel}} (cliente, periodo_dias, investimento, leads,
-// custo_por_lead, impressoes, cliques, ctr, cpm), compartilhado na organização.
-export const reportTemplates = pgTable("report_templates", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  body: text("body").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
-// Regra de automação: envia conteúdo recorrente no WhatsApp. Não envia nada
-// direto — um tick (endpoint /api/automations/tick, chamado por cron do n8n)
-// materializa uma linha em scheduled_messages a cada ocorrência que vence.
-export const messageAutomations = pgTable("message_automations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  organizationId: uuid("organization_id")
-    .notNull()
-    .references(() => organizations.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  active: boolean("active").notNull().default(true),
-  contentType: text("content_type").notNull(), // 'text' | 'report' | 'group_summary'
-  body: text("body"), // texto livre (contentType='text') OU texto/template customizado do relatório (contentType='report', sobrepõe reportTemplateId quando preenchido)
-  clientId: uuid("client_id").references(() => clients.id, { onDelete: "cascade" }), // legado — 1 cliente só; relatório novo usa reportClientIds
-  reportPeriodDays: integer("report_period_days").notNull().default(7), // 7 | 15 | 30
-  reportTemplateId: uuid("report_template_id").references(() => reportTemplates.id, { onDelete: "set null" }),
-  // Clientes-alvo do relatório (texto ou PDF) — cada um gera seu próprio
-  // texto/arquivo e sua própria mensagem, endereçada ao grupo daquele
-  // cliente. Vazio + clientId preenchido = automação antiga (1 cliente só).
-  reportClientIds: uuid("report_client_ids").array().notNull().default([]),
-  summaryTurno: text("summary_turno"), // 'manha' | 'tarde' — só p/ group_summary
-  summaryClientIds: uuid("summary_client_ids").array().notNull().default([]), // clientes cujos grupos entram no resumo
-  recurrenceType: text("recurrence_type").notNull(), // 'weekly' | 'daily' | 'monthly'
-  recurrenceDays: integer("recurrence_days").array().notNull().default([]), // weekly: 1..7 (1=segunda); monthly: 1..28
-  sendHour: integer("send_hour").notNull(), // 0..23, fuso America/Sao_Paulo
-  sendMinute: integer("send_minute").notNull(), // 0..59
-  whatsappInstanceId: uuid("whatsapp_instance_id").references(() => whatsappInstances.id, { onDelete: "set null" }),
-  lastRunAt: timestamp("last_run_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const messageAutomationDestinations = pgTable("message_automation_destinations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  automationId: uuid("automation_id")
-    .notNull()
-    .references(() => messageAutomations.id, { onDelete: "cascade" }),
-  kind: text("kind").notNull(), // 'client_group' | 'custom'
-  remoteJid: text("remote_jid"), // null p/ 'client_group' — resolve em runtime via clients.whatsappGroupId
-  name: text("name").notNull(),
-});
-
-export const messageAutomationMedia = pgTable("message_automation_media", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  automationId: uuid("automation_id")
-    .notNull()
-    .references(() => messageAutomations.id, { onDelete: "cascade" }),
-  base64: text("base64").notNull(),
-  mimetype: text("mimetype").notNull(),
-  filename: text("filename").notNull(),
-  sortOrder: integer("sort_order").notNull().default(0),
-});
-
 // --- relations (usadas pelos joins via db.query.*) ---
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   profiles: many(profiles),
-  clients: many(clients),
-  metaTokens: many(metaTokens),
-  whatsappInstances: many(whatsappInstances),
-  tags: many(tags),
-  tasks: many(tasks),
-  agentConversations: many(agentConversations),
-  scheduledMessages: many(scheduledMessages),
-  driveUploads: many(driveUploads),
-  n8nJobs: many(n8nJobs),
   appConfig: many(appConfig),
+  instagramConnections: many(instagramConnections),
+  instagramFunnelRules: many(instagramFunnelRules),
+  instagramFunnels: many(instagramFunnels),
 }));
 
 export const usersRelations = relations(users, ({ one }) => ({
   profile: one(profiles, { fields: [users.id], references: [profiles.id] }),
 }));
 
-export const profilesRelations = relations(profiles, ({ one, many }) => ({
+export const profilesRelations = relations(profiles, ({ one }) => ({
   organization: one(organizations, { fields: [profiles.organizationId], references: [organizations.id] }),
-  assignedTasks: many(tasks, { relationName: "assignee" }),
-  createdTasks: many(tasks, { relationName: "creator" }),
-  agentConversations: many(agentConversations),
-}));
-
-export const metaTokensRelations = relations(metaTokens, ({ one, many }) => ({
-  organization: one(organizations, { fields: [metaTokens.organizationId], references: [organizations.id] }),
-  assignedUser: one(profiles, { fields: [metaTokens.assignedUserId], references: [profiles.id] }),
-  clients: many(clients),
-}));
-
-export const whatsappInstancesRelations = relations(whatsappInstances, ({ one, many }) => ({
-  organization: one(organizations, { fields: [whatsappInstances.organizationId], references: [organizations.id] }),
-  assignedUser: one(profiles, { fields: [whatsappInstances.assignedUserId], references: [profiles.id] }),
-  clients: many(clients),
-  scheduledMessages: many(scheduledMessages),
-}));
-
-export const clientsRelations = relations(clients, ({ one, many }) => ({
-  organization: one(organizations, { fields: [clients.organizationId], references: [organizations.id] }),
-  metaToken: one(metaTokens, { fields: [clients.metaTokenId], references: [metaTokens.id] }),
-  whatsappInstance: one(whatsappInstances, { fields: [clients.whatsappInstanceId], references: [whatsappInstances.id] }),
-  owner: one(profiles, { fields: [clients.ownerUserId], references: [profiles.id] }),
-  notes: many(clientNotes),
-  metrics: many(metricsDaily),
-  campaignSnapshots: many(campaignSnapshots),
-  syncLogs: many(syncLog),
-  reports: many(reportLog),
-  sales: many(sales),
-  salesGoals: many(salesGoals),
-  tasks: many(tasks),
-  clientTags: many(clientTags),
-  conversationTemplates: many(conversationTemplates),
-}));
-
-export const metricsDailyRelations = relations(metricsDaily, ({ one }) => ({
-  client: one(clients, { fields: [metricsDaily.clientId], references: [clients.id] }),
-}));
-
-export const campaignSnapshotsRelations = relations(campaignSnapshots, ({ one }) => ({
-  client: one(clients, { fields: [campaignSnapshots.clientId], references: [clients.id] }),
-}));
-
-export const syncLogRelations = relations(syncLog, ({ one }) => ({
-  client: one(clients, { fields: [syncLog.clientId], references: [clients.id] }),
 }));
 
 export const appConfigRelations = relations(appConfig, ({ one }) => ({
   organization: one(organizations, { fields: [appConfig.organizationId], references: [organizations.id] }),
 }));
 
-export const conversationTemplatesRelations = relations(conversationTemplates, ({ one }) => ({
-  client: one(clients, { fields: [conversationTemplates.clientId], references: [clients.id] }),
+export const instagramConnectionsRelations = relations(instagramConnections, ({ one }) => ({
+  organization: one(organizations, { fields: [instagramConnections.organizationId], references: [organizations.id] }),
 }));
 
-export const clientNotesRelations = relations(clientNotes, ({ one }) => ({
-  client: one(clients, { fields: [clientNotes.clientId], references: [clients.id] }),
-}));
-
-export const reportLogRelations = relations(reportLog, ({ one }) => ({
-  client: one(clients, { fields: [reportLog.clientId], references: [clients.id] }),
-}));
-
-export const salesRelations = relations(sales, ({ one }) => ({
-  client: one(clients, { fields: [sales.clientId], references: [clients.id] }),
-}));
-
-export const salesGoalsRelations = relations(salesGoals, ({ one }) => ({
-  client: one(clients, { fields: [salesGoals.clientId], references: [clients.id] }),
-}));
-
-export const saleSuggestionsRelations = relations(saleSuggestions, ({ one }) => ({
-  client: one(clients, { fields: [saleSuggestions.clientId], references: [clients.id] }),
-  sale: one(sales, { fields: [saleSuggestions.saleId], references: [sales.id] }),
-}));
-
-export const tagsRelations = relations(tags, ({ one, many }) => ({
-  organization: one(organizations, { fields: [tags.organizationId], references: [organizations.id] }),
-  clientTags: many(clientTags),
-}));
-
-export const clientTagsRelations = relations(clientTags, ({ one }) => ({
-  client: one(clients, { fields: [clientTags.clientId], references: [clients.id] }),
-  tag: one(tags, { fields: [clientTags.tagId], references: [tags.id] }),
-}));
-
-export const tasksRelations = relations(tasks, ({ one }) => ({
-  organization: one(organizations, { fields: [tasks.organizationId], references: [organizations.id] }),
-  client: one(clients, { fields: [tasks.clientId], references: [clients.id] }),
-  assignee: one(profiles, {
-    fields: [tasks.assignedTo],
-    references: [profiles.id],
-    relationName: "assignee",
-  }),
-  creator: one(profiles, {
-    fields: [tasks.createdBy],
-    references: [profiles.id],
-    relationName: "creator",
-  }),
-}));
-
-export const agentConversationsRelations = relations(agentConversations, ({ one, many }) => ({
-  organization: one(organizations, { fields: [agentConversations.organizationId], references: [organizations.id] }),
-  creator: one(profiles, { fields: [agentConversations.createdBy], references: [profiles.id] }),
-  messages: many(agentMessages),
-}));
-
-export const agentMessagesRelations = relations(agentMessages, ({ one }) => ({
-  conversation: one(agentConversations, {
-    fields: [agentMessages.conversationId],
-    references: [agentConversations.id],
-  }),
-}));
-
-export const googleCalendarTokensRelations = relations(googleCalendarTokens, ({ one }) => ({
-  user: one(users, { fields: [googleCalendarTokens.userId], references: [users.id] }),
-}));
-
-export const n8nJobsRelations = relations(n8nJobs, ({ one }) => ({
-  organization: one(organizations, { fields: [n8nJobs.organizationId], references: [organizations.id] }),
-}));
-
-export const driveUploadsRelations = relations(driveUploads, ({ one }) => ({
-  organization: one(organizations, { fields: [driveUploads.organizationId], references: [organizations.id] }),
-}));
-
-export const scheduledMessagesRelations = relations(scheduledMessages, ({ one, many }) => ({
-  organization: one(organizations, { fields: [scheduledMessages.organizationId], references: [organizations.id] }),
-  whatsappInstance: one(whatsappInstances, {
-    fields: [scheduledMessages.whatsappInstanceId],
-    references: [whatsappInstances.id],
-  }),
-  recipients: many(scheduledMessageRecipients),
-}));
-
-export const scheduledMessageRecipientsRelations = relations(scheduledMessageRecipients, ({ one }) => ({
-  message: one(scheduledMessages, { fields: [scheduledMessageRecipients.messageId], references: [scheduledMessages.id] }),
-}));
-
-export const messageAutomationsRelations = relations(messageAutomations, ({ one, many }) => ({
-  organization: one(organizations, { fields: [messageAutomations.organizationId], references: [organizations.id] }),
-  client: one(clients, { fields: [messageAutomations.clientId], references: [clients.id] }),
-  whatsappInstance: one(whatsappInstances, {
-    fields: [messageAutomations.whatsappInstanceId],
-    references: [whatsappInstances.id],
-  }),
-  reportTemplate: one(reportTemplates, { fields: [messageAutomations.reportTemplateId], references: [reportTemplates.id] }),
-  destinations: many(messageAutomationDestinations),
-  media: many(messageAutomationMedia),
-}));
-
-export const reportTemplatesRelations = relations(reportTemplates, ({ one }) => ({
-  organization: one(organizations, { fields: [reportTemplates.organizationId], references: [organizations.id] }),
-}));
-
-export const messageAutomationDestinationsRelations = relations(messageAutomationDestinations, ({ one }) => ({
-  automation: one(messageAutomations, {
-    fields: [messageAutomationDestinations.automationId],
-    references: [messageAutomations.id],
-  }),
-}));
-
-export const messageAutomationMediaRelations = relations(messageAutomationMedia, ({ one }) => ({
-  automation: one(messageAutomations, {
-    fields: [messageAutomationMedia.automationId],
-    references: [messageAutomations.id],
-  }),
-}));
-
-export const instagramFunnelRulesRelations = relations(instagramFunnelRules, ({ many }) => ({
+export const instagramFunnelRulesRelations = relations(instagramFunnelRules, ({ one, many }) => ({
+  organization: one(organizations, { fields: [instagramFunnelRules.organizationId], references: [organizations.id] }),
+  funnel: one(instagramFunnels, { fields: [instagramFunnelRules.funnelId], references: [instagramFunnels.id] }),
   leads: many(instagramFunnelLeads),
 }));
 
@@ -917,7 +251,8 @@ export const instagramFunnelLeadsRelations = relations(instagramFunnelLeads, ({ 
   rule: one(instagramFunnelRules, { fields: [instagramFunnelLeads.ruleId], references: [instagramFunnelRules.id] }),
 }));
 
-export const instagramFunnelsRelations = relations(instagramFunnels, ({ many }) => ({
+export const instagramFunnelsRelations = relations(instagramFunnels, ({ one, many }) => ({
+  organization: one(organizations, { fields: [instagramFunnels.organizationId], references: [organizations.id] }),
   nodes: many(instagramFunnelNodes),
   edges: many(instagramFunnelEdges),
 }));
