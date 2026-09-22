@@ -6,9 +6,19 @@ Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave nu
 
 ## Estado deste repositório
 
-Isto é **só o código-fonte copiado como referência** — não builda nem roda sozinho ainda. Foi tirado do meio de um app maior (multi-tenant, com auth, clientes, Meta Ads etc.) e ainda carrega esse acoplamento. Falta bastante trabalho de scaffolding antes de virar um projeto independente rodável. Ver "O que falta" abaixo.
+Projeto TanStack Start + Nitro independente, roda sozinho (`npm run dev` / `npm run build && npm start`) com banco Postgres próprio, separado do app original. Ver `docs/2026-09-22-saas-scaffolding-design.md` pro design dessa fase.
 
-Hoje o acesso é travado só pra organização da Triad Company (`requirePlatformAdminOrg` em `instagram-funnel.ts`, que checa `isPlatformAdmin` além da sessão). Pra virar SaaS de verdade — qualquer empresa se cadastra e conecta o próprio Instagram — essa trava precisa sair, e o modelo de organização/usuário precisa ser desenhado do zero pra esse produto (decisão consciente de deixar pra depois, feita ao extrair este código).
+Hoje o acesso ainda é travado só pra organização da Triad Company (`requirePlatformAdminOrg` em `instagram-funnel.ts`, que checa `isPlatformAdmin` além da sessão) e a conexão do Instagram ainda é manual (colar token gerado à mão). Pra virar SaaS de verdade — qualquer empresa se cadastra e conecta o próprio Instagram — essa trava precisa sair e o fluxo de conexão precisa virar OAuth de verdade; isso é trabalho das próximas fases (auth self-service e conexão via OAuth), ainda não feito.
+
+### Rodando local
+
+```
+cp .env.example .env   # preencha DATABASE_URL e os demais
+npm install
+npm run db:migrate     # aplica drizzle/0000_smiling_rage.sql
+npm run create-user -- voce@exemplo.com "sua-senha" "Seu Nome"
+npm run dev
+```
 
 ## Estrutura
 
@@ -19,45 +29,44 @@ src/
     instagram-webhook.ts       # motor de execução — recebe comentário/DM da Meta, roda o funil
     instagram-webhook.route.ts # handler Nitro/h3 do webhook (verificação + validação HMAC)
     instagram-files.route.ts   # serve anexo (ex: PDF) de um bloco de mensagem pra Meta buscar
-    session.ts                 # auth da app original (JWT em cookie) — precisa decidir se reaproveita ou reescreve
+    session.ts                 # auth (JWT em cookie) — mesma lógica do app original, ainda não é self-service
+    settings.ts                 # chave da OpenAI por organização (app_config)
   lib/
-    auth.ts                    # bcrypt + JWT (assinar/verificar sessão) usado por session.ts — genérico, sem acoplamento
+    auth.ts                    # bcrypt + JWT (assinar/verificar sessão) usado por session.ts
+    utils.ts                    # helper cn() do shadcn
   routes/
-    admin.instagram-conexao.tsx           # tela de conectar a conta do Instagram
+    __root.tsx                            # shell HTML, providers, guard de sessão
+    login.tsx / index.tsx                 # login e redirect pra /admin/instagram-funil
+    admin.instagram-conexao.tsx           # tela de conectar a conta do Instagram (ainda manual)
     admin.instagram-funil.tsx             # abas Regras / Funis / Leads
     admin.instagram-funil-editor.$funnelId.tsx  # editor visual (React Flow) dos blocos do funil
+    admin.configuracoes.tsx               # chave da OpenAI
+  components/
+    AppShell.tsx                # header + navegação, enxuto (só este produto)
+    ui/                          # shadcn (new-york), só os componentes usados aqui
   db/
-    schema.ts   # schema Drizzle COMPLETO do app original — só uma fração das tabelas é deste
-                # recurso (ver lista abaixo); o resto pode ser podado quando isto virar projeto próprio
+    schema.ts   # schema Drizzle podado — só as tabelas deste produto (ver lista abaixo)
     client.ts   # cliente Postgres (drizzle-orm/postgres-js), genérico
-drizzle/        # migrações SQL das tabelas do funil, na ordem em que foram criadas
-docs/           # specs originais de design (fase 1: regras; fase 2: funil visual em blocos)
+scripts/
+  create-user.ts  # cria o platform admin inicial + a org "Triad Company" (sem signup ainda)
+drizzle/        # migração inicial (banco próprio, separado do Gestor de Tráfego)
+docs/           # specs de design (funil, funil visual, scaffolding SaaS)
 ```
 
-### Tabelas relevantes em `schema.ts`
+### Tabelas em `schema.ts`
 
-`instagram_connections`, `instagram_funnel_rules`, `instagram_funnel_leads`, `instagram_funnels`, `instagram_funnel_nodes`, `instagram_funnel_edges`, `instagram_funnel_sessions` — mais `organizations` e `profiles`, que essas referenciam via FK.
+`organizations`, `users`, `profiles`, `app_config` (config por organização — hoje só a chave da OpenAI), `instagram_connections`, `instagram_funnel_rules`, `instagram_funnel_leads`, `instagram_funnels`, `instagram_funnel_nodes`, `instagram_funnel_edges`, `instagram_funnel_sessions`.
 
-## O que falta pra rodar isolado
+## O que falta pra virar SaaS de verdade
 
-1. **Projeto TanStack Start do zero** — `package.json`, `vite.config.ts` (TanStack Start + Nitro), `tsconfig.json`, Tailwind, etc. Nenhum desses veio junto.
-2. **Handlers do Nitro** (webhook e arquivo do funil não passam pelo roteador normal — são registrados direto no `vite.config.ts`):
-   ```ts
-   nitro({
-     handlers: [
-       { route: "/api/webhooks/instagram", handler: "./src/server/instagram-webhook.route.ts" }, // sem `method`: GET (handshake) + POST (evento)
-       { route: "/api/instagram-files/:nodeId", method: "GET", handler: "./src/server/instagram-files.route.ts" },
-     ],
-   })
-   ```
-3. **Componentes shadcn/ui** usados pelas rotas: `badge`, `button`, `card`, `dialog`, `input`, `label`, `select`, `skeleton`, `switch`, `table`, `tabs`, `textarea` — regenerar via `npx shadcn add ...`, não foram copiados (são boilerplate do shadcn, não código deste recurso).
-4. **`@/components/AppShell`** — layout/navegação do app original, não copiado. Precisa de um shell próprio (ou algo mais simples) pro produto novo.
-5. **Dependência de npm `@xyflow/react`** — usada no editor visual do funil (`admin.instagram-funil-editor.$funnelId.tsx`).
-6. **`openai` (npm)** — usado em `instagram-webhook.ts` pra classificação por IA nos blocos de Condição.
-7. **Variáveis de ambiente**: `DATABASE_URL`, `JWT_SECRET`, `INSTAGRAM_APP_SECRET`, `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`, `APP_URL`. Nenhuma foi trazida (nem os valores, nem um `.env.example`).
-8. **`bcryptjs` e `jsonwebtoken` (npm)** — usados por `src/lib/auth.ts`.
-9. **Auth/multi-tenant do zero** — `session.ts` veio como referência de como a app original resolve `organizationId`/`isPlatformAdmin` a partir de um cookie JWT, mas esse modelo (uma única org "Triad Company" com trava de admin) não serve pra SaaS multi-cliente. Precisa desenhar signup, isolamento por tenant, e conexão do Instagram por conta própria de cada cliente.
-9. **Meta Developers**: cada tenant precisaria de App Review da Meta pra sair do modo "Standard Access" (hoje funciona sem review só porque a conta é adicionada manualmente como Tester no app da Triad — não escala pra SaaS multi-cliente).
+Resolvido no scaffolding (não precisa mais fazer): projeto TanStack Start + Nitro rodável, handlers do webhook/arquivo registrados, componentes shadcn/ui, `AppShell`, deps de npm (`@xyflow/react`, `openai`, `bcryptjs`, `jsonwebtoken`), `.env.example`, banco próprio com migração inicial.
+
+Ainda falta (próximas fases — ver `docs/2026-09-22-saas-scaffolding-design.md`):
+
+1. **Auth self-service e multi-tenant de verdade** — hoje só existe `scripts/create-user.ts` (cria o platform admin inicial + a org "Triad Company"), não há tela de cadastro. `session.ts` resolve `organizationId`/`isPlatformAdmin` a partir de um cookie JWT, mas o gate `isPlatformAdmin` trava o funil pra uso só da Triad Company — precisa sair, e o fluxo de signup/organização por cliente precisa ser desenhado.
+2. **Conexão do Instagram via OAuth** — hoje ainda é colar token de longa duração à mão (`admin.instagram-conexao.tsx`); precisa virar "Login with Instagram" de verdade.
+3. **Meta Developers**: cada tenant precisaria de App Review da Meta pra sair do modo "Standard Access" (hoje funciona sem review só porque a conta é adicionada manualmente como Tester no app da Triad — não escala pra SaaS multi-cliente).
+4. **Billing** — se/quando for cobrar dos clientes.
 
 ## Referência rápida da API do Instagram usada
 
