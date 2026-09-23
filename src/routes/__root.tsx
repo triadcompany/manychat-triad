@@ -42,7 +42,7 @@ export const Route = createRootRoute({
     links: [{ rel: "stylesheet", href: appCss }],
   }),
   beforeLoad: async ({ location }) => {
-    if (location.pathname === "/login") return;
+    if (location.pathname === "/login" || location.pathname === "/cadastro") return;
     const user = await getCurrentUser();
     if (!user) {
       throw redirect({ to: "/login" });

@@ -204,20 +204,40 @@ export const exitOrganization = createServerFn({ method: "POST" }).handler(async
   deleteCookie(ACTING_ORG_COOKIE, { path: "/" });
 });
 
-const createUserSchema = z.object({
+const signupSchema = z.object({
+  companyName: z.string().min(1),
+  fullName: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(8),
-  fullName: z.string().min(1),
 });
 
-// Usada só via script administrativo (create-user.ts) — não há tela de cadastro no app.
-// Não seta organizationId: uso restrito a criar o platform admin inicial (sem org).
-export const createUser = createServerFn({ method: "POST" })
-  .inputValidator(createUserSchema)
-  .handler(async ({ data }) => {
+// Cadastro self-service: cria a organização e o primeiro usuário (admin dela)
+// numa transação só — se o insert do usuário ou do profile falhar, a
+// organização não fica órfã. Loga automaticamente, igual `login`.
+export const signup = createServerFn({ method: "POST" })
+  .inputValidator(signupSchema)
+  .handler(async ({ data }): Promise<SessionUser> => {
     const email = data.email.trim().toLowerCase();
-    const passwordHash = await hashPassword(data.password);
-    const [user] = await db.insert(users).values({ email, passwordHash }).returning();
-    await db.insert(profiles).values({ id: user.id, fullName: data.fullName });
-    return { id: user.id, email: user.email };
+
+    const userId = await db.transaction(async (tx) => {
+      const [org] = await tx.insert(organizations).values({ name: data.companyName.trim() }).returning();
+      const passwordHash = await hashPassword(data.password);
+      let user: typeof users.$inferSelect;
+      try {
+        [user] = await tx.insert(users).values({ email, passwordHash }).returning();
+      } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "23505") {
+          throw new Error("Este email já está cadastrado.");
+        }
+        throw err;
+      }
+      await tx.insert(profiles).values({ id: user.id, fullName: data.fullName, role: "admin", organizationId: org.id });
+      return user.id;
+    });
+
+    const sessionUser = await loadSessionUser(userId);
+    if (!sessionUser) throw new Error("Erro ao criar a conta.");
+
+    setCookie(SESSION_COOKIE, signSessionToken(userId), COOKIE_OPTIONS);
+    return sessionUser;
   });

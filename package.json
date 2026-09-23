@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "create-user": "tsx --env-file=.env scripts/create-user.ts",
+    "reset-password": "tsx --env-file=.env scripts/reset-password.ts",
     "lint": "eslint ."
   },
   "dependencies": {

@@ -12,17 +12,6 @@ import {
 } from "@/db/schema";
 import { requireOrgContext } from "@/server/session";
 
-// Ferramenta interna, só pra conta da Triad Company (não é multi-tenant) —
-// toda função aqui exige platform admin, escopada pela organização do
-// próprio gestor logado. Ver spec
-// docs/superpowers/specs/2026-09-21-funil-instagram-design.md.
-
-export async function requirePlatformAdminOrg(): Promise<{ organizationId: string }> {
-  const { organizationId, isPlatformAdmin } = await requireOrgContext();
-  if (!isPlatformAdmin) throw new Error("Acesso restrito ao platform admin.");
-  return { organizationId };
-}
-
 // Contas conectadas via "Instagram Login" (sem Página do Facebook, nosso
 // caso) usam o host graph.instagram.com, não graph.facebook.com — e esses
 // endpoints são efetivamente sem versão (sem prefixo /vXX.X/ no caminho).
@@ -39,7 +28,7 @@ export interface InstagramConnectionRow {
 }
 
 const _fetchInstagramConnection = createServerFn({ method: "GET" }).handler(async (): Promise<InstagramConnectionRow | null> => {
-  const { organizationId } = await requirePlatformAdminOrg();
+  const { organizationId } = await requireOrgContext();
   const row = await db.query.instagramConnections.findFirst({
     where: eq(instagramConnections.organizationId, organizationId),
   });
@@ -66,7 +55,7 @@ const upsertConnectionSchema = z.object({
 const _upsertInstagramConnection = createServerFn({ method: "POST" })
   .inputValidator(upsertConnectionSchema)
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     const existing = await db.query.instagramConnections.findFirst({
       where: eq(instagramConnections.organizationId, organizationId),
     });
@@ -101,7 +90,7 @@ export interface InstagramPostRow {
 }
 
 const _fetchRecentInstagramPosts = createServerFn({ method: "GET" }).handler(async (): Promise<InstagramPostRow[]> => {
-  const { organizationId } = await requirePlatformAdminOrg();
+  const { organizationId } = await requireOrgContext();
   const connection = await db.query.instagramConnections.findFirst({
     where: and(eq(instagramConnections.organizationId, organizationId), eq(instagramConnections.active, true)),
   });
@@ -149,7 +138,7 @@ export interface FunnelRuleRow {
 }
 
 const _fetchFunnelRules = createServerFn({ method: "GET" }).handler(async (): Promise<FunnelRuleRow[]> => {
-  const { organizationId } = await requirePlatformAdminOrg();
+  const { organizationId } = await requireOrgContext();
   const rows = await db
     .select()
     .from(instagramFunnelRules)
@@ -186,7 +175,7 @@ const createRuleSchema = z.object({
 const _createFunnelRule = createServerFn({ method: "POST" })
   .inputValidator(createRuleSchema)
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     await db.insert(instagramFunnelRules).values({
       organizationId,
       postId: data.post_id,
@@ -222,7 +211,7 @@ const updateRuleSchema = z.object({
 const _updateFunnelRule = createServerFn({ method: "POST" })
   .inputValidator(updateRuleSchema)
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     await db
       .update(instagramFunnelRules)
       .set({
@@ -247,7 +236,7 @@ export async function updateFunnelRule(payload: {
 const _toggleFunnelRule = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string(), active: z.boolean() }))
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     await db
       .update(instagramFunnelRules)
       .set({ active: data.active })
@@ -261,7 +250,7 @@ export async function toggleFunnelRule(id: string, active: boolean): Promise<voi
 const _deleteFunnelRule = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     await db
       .delete(instagramFunnelRules)
       .where(and(eq(instagramFunnelRules.id, data.id), eq(instagramFunnelRules.organizationId, organizationId)));
@@ -286,7 +275,7 @@ export interface FunnelLeadRow {
 }
 
 const _fetchFunnelLeads = createServerFn({ method: "GET" }).handler(async (): Promise<FunnelLeadRow[]> => {
-  const { organizationId } = await requirePlatformAdminOrg();
+  const { organizationId } = await requireOrgContext();
   const rows = await db
     .select({
       id: instagramFunnelLeads.id,
@@ -330,7 +319,7 @@ export interface FunnelRow {
 }
 
 const _fetchFunnels = createServerFn({ method: "GET" }).handler(async (): Promise<FunnelRow[]> => {
-  const { organizationId } = await requirePlatformAdminOrg();
+  const { organizationId } = await requireOrgContext();
   const rows = await db
     .select()
     .from(instagramFunnels)
@@ -346,7 +335,7 @@ export async function fetchFunnels(): Promise<FunnelRow[]> {
 const _createFunnel = createServerFn({ method: "POST" })
   .inputValidator(z.object({ name: z.string().min(1) }))
   .handler(async ({ data }): Promise<{ id: string }> => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     return db.transaction(async (tx) => {
       const [funnel] = await tx.insert(instagramFunnels).values({ organizationId, name: data.name.trim() }).returning({ id: instagramFunnels.id });
       // Bloco Gatilho — ponto de entrada fixo, um por funil, criado junto.
@@ -362,7 +351,7 @@ export async function createFunnel(name: string): Promise<{ id: string }> {
 const _renameFunnel = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string(), name: z.string().min(1) }))
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     await db
       .update(instagramFunnels)
       .set({ name: data.name.trim() })
@@ -376,7 +365,7 @@ export async function renameFunnel(id: string, name: string): Promise<void> {
 const _deleteFunnel = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string() }))
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     await db.delete(instagramFunnels).where(and(eq(instagramFunnels.id, data.id), eq(instagramFunnels.organizationId, organizationId)));
   });
 
@@ -407,7 +396,7 @@ export interface FunnelEdgeRow {
 const _fetchFunnelGraph = createServerFn({ method: "GET" })
   .inputValidator(z.object({ funnel_id: z.string() }))
   .handler(async ({ data }): Promise<{ nodes: FunnelNodeRow[]; edges: FunnelEdgeRow[] }> => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     const funnel = await db.query.instagramFunnels.findFirst({
       where: and(eq(instagramFunnels.id, data.funnel_id), eq(instagramFunnels.organizationId, organizationId)),
     });
@@ -470,7 +459,7 @@ const saveGraphSchema = z.object({
 const _saveFunnelGraph = createServerFn({ method: "POST" })
   .inputValidator(saveGraphSchema)
   .handler(async ({ data }) => {
-    const { organizationId } = await requirePlatformAdminOrg();
+    const { organizationId } = await requireOrgContext();
     const funnel = await db.query.instagramFunnels.findFirst({
       where: and(eq(instagramFunnels.id, data.funnel_id), eq(instagramFunnels.organizationId, organizationId)),
     });
