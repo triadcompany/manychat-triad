@@ -27,10 +27,12 @@ export interface InstagramConnectionRow {
   created_at: string;
 }
 
+// Só devolve a conexão ativa — depois de "Desconectar" a linha continua no
+// banco (active: false), mas a tela deve tratar isso como não conectado.
 const _fetchInstagramConnection = createServerFn({ method: "GET" }).handler(async (): Promise<InstagramConnectionRow | null> => {
   const { organizationId } = await requireOrgContext();
   const row = await db.query.instagramConnections.findFirst({
-    where: eq(instagramConnections.organizationId, organizationId),
+    where: and(eq(instagramConnections.organizationId, organizationId), eq(instagramConnections.active, true)),
   });
   if (!row) return null;
   return {
@@ -46,38 +48,18 @@ export async function fetchInstagramConnection(): Promise<InstagramConnectionRow
   return _fetchInstagramConnection();
 }
 
-const upsertConnectionSchema = z.object({
-  instagram_business_account_id: z.string().min(1),
-  access_token: z.string().min(1),
-  expires_at: z.string().nullable().optional(),
+// A conexão em si é feita pelo fluxo OAuth (/api/instagram/connect →
+// /api/instagram/callback, ver instagram-oauth.ts) — aqui só desliga.
+const _disconnectInstagram = createServerFn({ method: "POST" }).handler(async () => {
+  const { organizationId } = await requireOrgContext();
+  await db
+    .update(instagramConnections)
+    .set({ active: false })
+    .where(eq(instagramConnections.organizationId, organizationId));
 });
 
-const _upsertInstagramConnection = createServerFn({ method: "POST" })
-  .inputValidator(upsertConnectionSchema)
-  .handler(async ({ data }) => {
-    const { organizationId } = await requireOrgContext();
-    const existing = await db.query.instagramConnections.findFirst({
-      where: eq(instagramConnections.organizationId, organizationId),
-    });
-    const values = {
-      instagramBusinessAccountId: data.instagram_business_account_id.trim(),
-      accessToken: data.access_token.trim(),
-      expiresAt: data.expires_at ?? null,
-      active: true,
-    };
-    if (existing) {
-      await db.update(instagramConnections).set(values).where(eq(instagramConnections.id, existing.id));
-    } else {
-      await db.insert(instagramConnections).values({ organizationId, ...values });
-    }
-  });
-
-export async function upsertInstagramConnection(payload: {
-  instagram_business_account_id: string;
-  access_token: string;
-  expires_at?: string | null;
-}): Promise<void> {
-  await _upsertInstagramConnection({ data: payload });
+export async function disconnectInstagram(): Promise<void> {
+  await _disconnectInstagram();
 }
 
 // ── Posts recentes (pra escolher na hora de criar uma regra) ─────────────

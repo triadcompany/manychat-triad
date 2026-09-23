@@ -1,14 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Instagram, ArrowRight } from "lucide-react";
+import { Instagram } from "lucide-react";
 import { toast } from "sonner";
-import { fetchInstagramConnection, upsertInstagramConnection } from "@/server/instagram-funnel";
+import { fetchInstagramConnection, disconnectInstagram } from "@/server/instagram-funnel";
 
 export const Route = createFileRoute("/admin/instagram-conexao")({
   head: () => ({ meta: [{ title: "Conexão Instagram — Admin" }] }),
@@ -19,30 +17,45 @@ function daysUntil(iso: string): number {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
 }
 
+const ERROR_MESSAGES: Record<string, string> = {
+  cancelado: "Conexão cancelada.",
+  state_invalido: "Não foi possível confirmar a autorização — tente conectar de novo.",
+  falha_conexao: "Falha ao conectar com o Instagram — tente de novo em instantes.",
+};
+
 function InstagramConexaoPage() {
   const queryClient = useQueryClient();
-  const [accountId, setAccountId] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [expiresAt, setExpiresAt] = useState("");
 
   const { data: connection, isLoading } = useQuery({
     queryKey: ["instagram-connection"],
     queryFn: fetchInstagramConnection,
   });
 
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      upsertInstagramConnection({
-        instagram_business_account_id: accountId.trim(),
-        access_token: accessToken.trim(),
-        expires_at: expiresAt || null,
-      }),
+  // /api/instagram/callback redireciona pra cá com ?connected=1 ou
+  // ?error=... — mostra o toast uma vez e limpa a query string.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get("error");
+    const connected = params.get("connected");
+    if (connected) {
+      toast.success("Instagram conectado.");
+      queryClient.invalidateQueries({ queryKey: ["instagram-connection"] });
+    } else if (error) {
+      toast.error(ERROR_MESSAGES[error] ?? "Erro ao conectar o Instagram.");
+    }
+    if (connected || error) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const disconnectMutation = useMutation({
+    mutationFn: disconnectInstagram,
     onSuccess: () => {
-      toast.success("Conexão do Instagram salva.");
-      setAccessToken("");
+      toast.success("Instagram desconectado.");
       queryClient.invalidateQueries({ queryKey: ["instagram-connection"] });
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao salvar conexão"),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao desconectar"),
   });
 
   const expiringSoon = connection?.expires_at && daysUntil(connection.expires_at) <= 7;
@@ -55,7 +68,7 @@ function InstagramConexaoPage() {
           <h1 className="text-xl md:text-2xl font-semibold tracking-tight">Conexão Instagram</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Só pra conta da Triad Company — usada pelo{" "}
+          Usada pelo{" "}
           <Link to="/admin/instagram-funil" className="underline underline-offset-2 hover:text-foreground">
             funil de comentário → DM
           </Link>
@@ -89,63 +102,29 @@ function InstagramConexaoPage() {
             </div>
           </div>
 
-          <div className="p-5 space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="ig-account-id">Instagram Business Account ID</Label>
-              <Input
-                id="ig-account-id"
-                value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-                placeholder={connection?.instagram_business_account_id ?? "178414..."}
-                className="font-mono text-xs"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ig-token">{!connection ? "Access Token (longa duração)" : "Atualizar Access Token"}</Label>
-              <Input
-                id="ig-token"
-                type="text"
-                value={accessToken}
-                onChange={(e) => setAccessToken(e.target.value)}
-                placeholder="IGQ..."
-                className="font-mono text-xs"
-                spellCheck={false}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="ig-expires">Data de expiração do token (opcional, ~60 dias)</Label>
-              <Input id="ig-expires" type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
-            </div>
-            <Button
-              onClick={() => saveMutation.mutate()}
-              disabled={!accountId.trim() || !accessToken.trim() || saveMutation.isPending}
-              className="w-full sm:w-auto"
-            >
-              {saveMutation.isPending ? "Salvando..." : "Salvar conexão"}
-            </Button>
+          <div className="p-5">
+            {connection ? (
+              <Button
+                variant="outline"
+                onClick={() => disconnectMutation.mutate()}
+                disabled={disconnectMutation.isPending}
+              >
+                {disconnectMutation.isPending ? "Desconectando..." : "Desconectar"}
+              </Button>
+            ) : (
+              <Button asChild disabled={isLoading}>
+                <a href="/api/instagram/connect">Conectar Instagram</a>
+              </Button>
+            )}
           </div>
         </Card>
 
         <Card className="p-5">
-          <p className="text-sm font-medium mb-2 flex items-center gap-1.5">
-            Como gerar esses valores <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Ao clicar em "Conectar Instagram" você é levado pro Instagram, autoriza o acesso pra
+            este sistema enviar mensagens em nome da sua conta, e volta já conectado — sem
+            precisar gerar nem colar nenhum token à mão.
           </p>
-          <ol className="text-sm text-muted-foreground space-y-1.5 list-decimal list-inside">
-            <li>
-              Pode usar o mesmo app do Meta Ads que vocês já têm em{" "}
-              <a href="https://developers.facebook.com/apps" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
-                developers.facebook.com/apps
-              </a>{" "}
-              — um app pode ter vários produtos. Só adicione o produto "Instagram" com "Instagram Login" nele (ou crie um app novo, se preferir separar).
-            </li>
-            <li>Adicione a conta da Triad Company como Admin/Tester do app — dispensa revisão do app da Meta.</li>
-            <li>Gere um token de usuário do Instagram com as permissões <code className="text-xs bg-muted px-1 py-0.5 rounded">instagram_business_basic</code> e <code className="text-xs bg-muted px-1 py-0.5 rounded">instagram_business_manage_messages</code>, e troque por um de longa duração.</li>
-            <li>O "Instagram Business Account ID" é o retornado por <code className="text-xs bg-muted px-1 py-0.5 rounded">GET /me?fields=id</code> usando esse token.</li>
-            <li>
-              No painel do app, em Webhooks, assine o campo <code className="text-xs bg-muted px-1 py-0.5 rounded">comments</code> do produto Instagram, apontando pra{" "}
-              <code className="text-xs bg-muted px-1 py-0.5 rounded break-all">https://[seu domínio]/api/webhooks/instagram</code>.
-            </li>
-          </ol>
         </Card>
       </div>
     </AppShell>

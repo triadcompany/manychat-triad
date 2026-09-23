@@ -39,6 +39,26 @@ export default defineConfig({
           method: "GET",
           handler: "./src/server/instagram-files.route.ts",
         },
+        {
+          // Início do fluxo "Login with Instagram" — redirect, por isso é
+          // handler direto e não server function (precisa ser navegação).
+          route: "/api/instagram/connect",
+          method: "GET",
+          handler: "./src/server/instagram-connect.route.ts",
+        },
+        {
+          // Callback OAuth — pra onde a Meta redireciona de volta com o code.
+          route: "/api/instagram/callback",
+          method: "GET",
+          handler: "./src/server/instagram-callback.route.ts",
+        },
+        {
+          // Renovação do token de longa duração — chamado por cron externo
+          // (n8n), autenticado por x-automation-secret, não por sessão.
+          route: "/api/instagram/refresh-tokens",
+          method: "GET",
+          handler: "./src/server/instagram-refresh-tokens.route.ts",
+        },
       ],
     }),
     viteReact(),
