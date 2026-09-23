@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CadastroRouteImport } from './routes/cadastro'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as PrivacidadeRouteImport } from './routes/privacidade'
 import { Route as AdminConfiguracoesRouteImport } from './routes/admin.configuracoes'
 import { Route as AdminInstagramConexaoRouteImport } from './routes/admin.instagram-conexao'
 import { Route as AdminInstagramFunilRouteImport } from './routes/admin.instagram-funil'
@@ -30,6 +31,11 @@ const CadastroRoute = CadastroRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacidadeRoute = PrivacidadeRouteImport.update({
+  id: '/privacidade',
+  path: '/privacidade',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminConfiguracoesRoute = AdminConfiguracoesRouteImport.update({
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cadastro': typeof CadastroRoute
   '/login': typeof LoginRoute
+  '/privacidade': typeof PrivacidadeRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
   '/admin/instagram-conexao': typeof AdminInstagramConexaoRoute
   '/admin/instagram-funil': typeof AdminInstagramFunilRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cadastro': typeof CadastroRoute
   '/login': typeof LoginRoute
+  '/privacidade': typeof PrivacidadeRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
   '/admin/instagram-conexao': typeof AdminInstagramConexaoRoute
   '/admin/instagram-funil': typeof AdminInstagramFunilRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cadastro': typeof CadastroRoute
   '/login': typeof LoginRoute
+  '/privacidade': typeof PrivacidadeRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
   '/admin/instagram-conexao': typeof AdminInstagramConexaoRoute
   '/admin/instagram-funil': typeof AdminInstagramFunilRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cadastro'
     | '/login'
+    | '/privacidade'
     | '/admin/configuracoes'
     | '/admin/instagram-conexao'
     | '/admin/instagram-funil'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cadastro'
     | '/login'
+    | '/privacidade'
     | '/admin/configuracoes'
     | '/admin/instagram-conexao'
     | '/admin/instagram-funil'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cadastro'
     | '/login'
+    | '/privacidade'
     | '/admin/configuracoes'
     | '/admin/instagram-conexao'
     | '/admin/instagram-funil'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CadastroRoute: typeof CadastroRoute
   LoginRoute: typeof LoginRoute
+  PrivacidadeRoute: typeof PrivacidadeRoute
   AdminConfiguracoesRoute: typeof AdminConfiguracoesRoute
   AdminInstagramConexaoRoute: typeof AdminInstagramConexaoRoute
   AdminInstagramFunilRoute: typeof AdminInstagramFunilRoute
@@ -143,6 +156,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacidade': {
+      id: '/privacidade'
+      path: '/privacidade'
+      fullPath: '/privacidade'
+      preLoaderRoute: typeof PrivacidadeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/configuracoes': {
@@ -180,6 +200,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CadastroRoute: CadastroRoute,
   LoginRoute: LoginRoute,
+  PrivacidadeRoute: PrivacidadeRoute,
   AdminConfiguracoesRoute: AdminConfiguracoesRoute,
   AdminInstagramConexaoRoute: AdminInstagramConexaoRoute,
   AdminInstagramFunilRoute: AdminInstagramFunilRoute,
