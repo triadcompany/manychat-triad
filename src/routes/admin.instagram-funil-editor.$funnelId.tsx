@@ -28,7 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Sparkles } from "lucide-react";
+import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Sparkles, MousePointerClick } from "lucide-react";
 import { toast } from "sonner";
 import { fetchFunnelGraph, saveFunnelGraph, fetchFunnels } from "@/server/instagram-funnel";
 
@@ -46,6 +46,10 @@ interface MessageData extends Record<string, unknown> {
 interface ConditionData extends Record<string, unknown> {
   keywords: { id: string; keyword: string }[];
   use_ai: boolean;
+}
+interface QuickReplyData extends Record<string, unknown> {
+  message: string;
+  options: { id: string; label: string }[];
 }
 
 function TriggerNodeCard() {
@@ -106,7 +110,34 @@ function ConditionNodeCard({ data }: NodeProps<Node<ConditionData>>) {
   );
 }
 
-const nodeTypes = { trigger: TriggerNodeCard, message: MessageNodeCard, condition: ConditionNodeCard };
+function QuickReplyNodeCard({ data }: NodeProps<Node<QuickReplyData>>) {
+  const rows = [...data.options, { id: "default", label: "Ignorou/digitou" }];
+  return (
+    <div className="rounded-xl border-2 border-violet-500/60 bg-violet-500/10 px-4 py-3 min-w-[220px] shadow-sm">
+      <Handle type="target" position={Position.Left} className="!bg-muted-foreground !w-3 !h-3" />
+      <div className="flex items-center gap-1.5 text-violet-600 dark:text-violet-400 font-semibold text-[10px] uppercase tracking-wide">
+        <MousePointerClick className="h-3.5 w-3.5" /> Botões
+      </div>
+      <p className="text-sm mt-1 line-clamp-2 whitespace-pre-wrap">{data.message || "Clique 2x pra escrever a mensagem..."}</p>
+      <div className="mt-2 space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.id} className="relative flex items-center bg-background/70 rounded px-2 py-1 pr-4">
+            <span className={`text-xs truncate ${r.id === "default" ? "text-muted-foreground italic" : ""}`}>{r.label}</span>
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={r.id}
+              style={{ position: "absolute", right: -18, top: "50%", transform: "translateY(-50%)" }}
+              className="!bg-violet-500 !w-3 !h-3"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { trigger: TriggerNodeCard, message: MessageNodeCard, condition: ConditionNodeCard, quick_reply: QuickReplyNodeCard };
 
 function FunnelEditorPage() {
   const { funnelId } = useParams({ from: "/admin/instagram-funil-editor/$funnelId" });
@@ -134,7 +165,9 @@ function FunnelEditorPage() {
             ? { message: n.message ?? "", file_base64: n.file_base64, file_mimetype: n.file_mimetype, file_filename: n.file_filename }
             : n.type === "condition"
               ? { keywords: n.condition_keywords, use_ai: n.condition_use_ai }
-              : {},
+              : n.type === "quick_reply"
+                ? { message: n.message ?? "", options: n.quick_reply_options }
+                : {},
       }))
     );
     setEdges(graph.edges.map((e) => ({ id: e.id, source: e.source_node_id, sourceHandle: e.source_handle, target: e.target_node_id })));
@@ -148,19 +181,16 @@ function FunnelEditorPage() {
     [setEdges]
   );
 
-  const addNode = (type: "message" | "condition") => {
+  const addNode = (type: "message" | "condition" | "quick_reply") => {
     const id = crypto.randomUUID();
     const offset = nodes.length * 40;
-    setNodes((nds) => [
-      ...nds,
-      {
-        id,
-        type,
-        position: { x: 380 + offset, y: 120 + offset },
-        deletable: true,
-        data: type === "message" ? { message: "", file_base64: null, file_mimetype: null, file_filename: null } : { keywords: [], use_ai: false },
-      },
-    ]);
+    const data =
+      type === "message"
+        ? { message: "", file_base64: null, file_mimetype: null, file_filename: null }
+        : type === "condition"
+          ? { keywords: [], use_ai: false }
+          : { message: "", options: [] };
+    setNodes((nds) => [...nds, { id, type, position: { x: 380 + offset, y: 120 + offset }, deletable: true, data }]);
   };
 
   const saveMutation = useMutation({
@@ -169,15 +199,21 @@ function FunnelEditorPage() {
         funnelId,
         nodes.map((n) => ({
           id: n.id,
-          type: n.type as "trigger" | "message" | "condition",
+          type: n.type as "trigger" | "message" | "condition" | "quick_reply",
           position_x: n.position.x,
           position_y: n.position.y,
-          message: n.type === "message" ? ((n.data as MessageData).message ?? null) : null,
+          message:
+            n.type === "message"
+              ? ((n.data as MessageData).message ?? null)
+              : n.type === "quick_reply"
+                ? ((n.data as QuickReplyData).message ?? null)
+                : null,
           file_base64: n.type === "message" ? (n.data as MessageData).file_base64 : null,
           file_mimetype: n.type === "message" ? (n.data as MessageData).file_mimetype : null,
           file_filename: n.type === "message" ? (n.data as MessageData).file_filename : null,
           condition_keywords: n.type === "condition" ? (n.data as ConditionData).keywords : [],
           condition_use_ai: n.type === "condition" ? (n.data as ConditionData).use_ai : false,
+          quick_reply_options: n.type === "quick_reply" ? (n.data as QuickReplyData).options : [],
         })),
         edges.map((e) => ({ source_node_id: e.source, source_handle: e.sourceHandle ?? null, target_node_id: e.target }))
       ),
@@ -200,6 +236,9 @@ function FunnelEditorPage() {
         </Button>
         <Button size="sm" variant="outline" className="gap-1.5" onClick={() => addNode("condition")}>
           <Plus className="h-3.5 w-3.5" /> Condição
+        </Button>
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => addNode("quick_reply")}>
+          <Plus className="h-3.5 w-3.5" /> Botões
         </Button>
         <Button size="sm" className="gap-1.5" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="h-3.5 w-3.5" /> {saveMutation.isPending ? "Salvando..." : "Salvar"}
@@ -236,6 +275,15 @@ function FunnelEditorPage() {
         {editingNode?.type === "condition" && (
           <ConditionNodeEditor
             data={editingNode.data as ConditionData}
+            onSave={(patch) => {
+              setNodes((nds) => nds.map((n) => (n.id === editingNode.id ? { ...n, data: { ...n.data, ...patch } } : n)));
+              setEditingNode(null);
+            }}
+          />
+        )}
+        {editingNode?.type === "quick_reply" && (
+          <QuickReplyNodeEditor
+            data={editingNode.data as QuickReplyData}
             onSave={(patch) => {
               setNodes((nds) => nds.map((n) => (n.id === editingNode.id ? { ...n, data: { ...n.data, ...patch } } : n)));
               setEditingNode(null);
@@ -370,6 +418,76 @@ function ConditionNodeEditor({ data, onSave }: { data: ConditionData; onSave: (p
       </div>
       <DialogFooter>
         <Button onClick={() => onSave({ keywords: keywords.filter((k) => k.keyword.trim()), use_ai: useAi })}>Salvar bloco</Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+const MAX_QUICK_REPLIES = 13; // limite da API de mensagens do Instagram
+const MAX_QUICK_REPLY_LABEL = 20; // idem — título truncado depois disso
+
+type QuickReplyPatch = { message: string; options: { id: string; label: string }[] };
+
+function QuickReplyNodeEditor({ data, onSave }: { data: QuickReplyData; onSave: (patch: QuickReplyPatch) => void }) {
+  const [message, setMessage] = useState(data.message);
+  const [options, setOptions] = useState(data.options);
+
+  return (
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Botões</DialogTitle>
+      </DialogHeader>
+      <div className="py-2 space-y-4">
+        <div className="space-y-1.5">
+          <Label>Mensagem (obrigatória — sai junto com os botões)</Label>
+          <Textarea value={message} onChange={(e) => setMessage(e.target.value)} className="min-h-[80px]" autoFocus />
+        </div>
+        <div className="space-y-2">
+          <Label>Opções (cada uma vira um botão e uma saída no bloco)</Label>
+          {options.map((o, i) => (
+            <div key={o.id} className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={o.label}
+                  onChange={(e) => setOptions((os) => os.map((oo, ii) => (ii === i ? { ...oo, label: e.target.value } : oo)))}
+                  placeholder="Ex: Quero saber mais"
+                />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="shrink-0 text-destructive hover:text-destructive"
+                  onClick={() => setOptions((os) => os.filter((_, ii) => ii !== i))}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className={`text-[11px] ${o.label.length > MAX_QUICK_REPLY_LABEL ? "text-destructive" : "text-muted-foreground"}`}>
+                {o.label.length}/{MAX_QUICK_REPLY_LABEL} caracteres
+                {o.label.length > MAX_QUICK_REPLY_LABEL && " — o Instagram trunca o que passar disso"}
+              </p>
+            </div>
+          ))}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            disabled={options.length >= MAX_QUICK_REPLIES}
+            onClick={() => setOptions((os) => [...os, { id: crypto.randomUUID(), label: "" }])}
+          >
+            <Plus className="h-3.5 w-3.5" /> Adicionar opção {options.length >= MAX_QUICK_REPLIES && `(máximo ${MAX_QUICK_REPLIES})`}
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            Sempre tem também uma saída fixa "Ignorou/digitou", pra quando a pessoa digita em vez de tocar num botão.
+          </p>
+        </div>
+      </div>
+      <DialogFooter>
+        <Button
+          disabled={!message.trim()}
+          onClick={() => onSave({ message, options: options.filter((o) => o.label.trim()) })}
+        >
+          Salvar bloco
+        </Button>
       </DialogFooter>
     </DialogContent>
   );

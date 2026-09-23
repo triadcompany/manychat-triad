@@ -144,10 +144,10 @@ export const instagramFunnelNodes = pgTable("instagram_funnel_nodes", {
   funnelId: uuid("funnel_id")
     .notNull()
     .references(() => instagramFunnels.id, { onDelete: "cascade" }),
-  type: text("type").notNull(), // trigger | message | condition
+  type: text("type").notNull(), // trigger | message | condition | quick_reply
   positionX: integer("position_x").notNull().default(0),
   positionY: integer("position_y").notNull().default(0),
-  message: text("message"), // só type='message'
+  message: text("message"), // type='message' (texto do DM) ou type='quick_reply' (pergunta que acompanha os botões)
   // Anexo opcional (ex: PDF) num bloco type='message' — a Meta exige URL
   // pública pra mandar anexo, servimos via rota própria (instagram-files.route.ts).
   fileBase64: text("file_base64"),
@@ -160,6 +160,11 @@ export const instagramFunnelNodes = pgTable("instagram_funnel_nodes", {
   // resposta da pessoa pro GPT (chave OpenAI configurada em Configurações)
   // escolher qual palavra-chave melhor representa a intenção.
   conditionUseAi: boolean("condition_use_ai").notNull().default(false),
+  // só type='quick_reply' — array de { id: uuid, label: string }, um botão
+  // por entrada (fora a saída fixa "default", pra quando a pessoa ignora os
+  // botões e digita em vez de tocar). Limite da Meta: até 13, 20 caracteres
+  // por rótulo — validado no editor e truncado defensivamente no envio.
+  quickReplyOptions: jsonb("quick_reply_options").notNull().default([]),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

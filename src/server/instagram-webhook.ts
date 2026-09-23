@@ -34,7 +34,7 @@ interface CommentChangeValue {
 interface MessagingEvent {
   sender?: { id?: string };
   recipient?: { id?: string };
-  message?: { text?: string; is_echo?: boolean };
+  message?: { text?: string; is_echo?: boolean; quick_reply?: { payload?: string } };
 }
 
 interface InstagramWebhookEntry {
@@ -82,7 +82,7 @@ export async function handleInstagramWebhook(body: InstagramWebhookBody): Promis
       // Eco da nossa própria mensagem enviada (sender = a própria conta) —
       // ignora, senão o funil reagiria à mensagem que ele mesmo mandou.
       if (!senderId || !text || event.message?.is_echo || senderId === igBusinessAccountId) continue;
-      await processIncomingMessage(igBusinessAccountId, senderId, text);
+      await processIncomingMessage(igBusinessAccountId, senderId, text, event.message?.quick_reply?.payload ?? null);
     }
   }
 
@@ -157,7 +157,12 @@ async function processComment(
   return !!inserted;
 }
 
-async function processIncomingMessage(igBusinessAccountId: string, senderId: string, text: string): Promise<void> {
+async function processIncomingMessage(
+  igBusinessAccountId: string,
+  senderId: string,
+  text: string,
+  quickReplyPayload: string | null
+): Promise<void> {
   const connection = await db.query.instagramConnections.findFirst({
     where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
   });
@@ -172,12 +177,21 @@ async function processIncomingMessage(igBusinessAccountId: string, senderId: str
   // Sempre apaga a sessão antes de seguir — se não achar nó/aresta, o funil
   // só termina aqui, não fica uma sessão órfã esperando pra sempre.
   await db.delete(instagramFunnelSessions).where(eq(instagramFunnelSessions.id, session.id));
-  if (!node || node.type !== "condition") return;
+  if (!node || (node.type !== "condition" && node.type !== "quick_reply")) return;
 
-  const keywords = (node.conditionKeywords as { id: string; keyword: string }[] | null) ?? [];
-  const handle = node.conditionUseAi
-    ? await classifyReplyWithAI(connection.organizationId, text, keywords)
-    : matchByKeyword(text, keywords);
+  let handle: string;
+  if (node.type === "condition") {
+    const keywords = (node.conditionKeywords as { id: string; keyword: string }[] | null) ?? [];
+    handle = node.conditionUseAi
+      ? await classifyReplyWithAI(connection.organizationId, text, keywords)
+      : matchByKeyword(text, keywords);
+  } else {
+    // Bloco Botões: só reage a clique de verdade (payload exato). Texto
+    // digitado em vez de tocar num botão cai direto em "default" — este
+    // bloco não interpreta texto livre, isso é papel do Condição.
+    const options = (node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+    handle = quickReplyPayload && options.some((o) => o.id === quickReplyPayload) ? quickReplyPayload : "default";
+  }
 
   const edge = await db.query.instagramFunnelEdges.findFirst({
     where: and(eq(instagramFunnelEdges.sourceNodeId, node.id), eq(instagramFunnelEdges.sourceHandle, handle)),
@@ -231,8 +245,8 @@ async function classifyReplyWithAI(organizationId: string, text: string, keyword
 }
 
 // Segue o grafo a partir de um nó: manda mensagens em sequência sem pausa
-// até bater numa Condição, onde grava a sessão e para pra esperar a próxima
-// resposta da pessoa.
+// até bater numa Condição ou num bloco Botões, onde grava a sessão e para
+// pra esperar a próxima resposta da pessoa.
 async function advanceFunnel(
   accessToken: string,
   igBusinessAccountId: string,
@@ -274,6 +288,27 @@ async function advanceFunnel(
         target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
         set: { funnelId, currentNodeId: node.id, leadId, updatedAt: new Date().toISOString() },
       });
+    return;
+  }
+
+  if (node.type === "quick_reply") {
+    if (!node.message) return; // sem mensagem não tem o que mandar — bloco mal configurado
+    const options = ((node.quickReplyOptions as { id: string; label: string }[] | null) ?? []).slice(0, 13);
+    try {
+      await sendDirectMessageWithQuickReplies(accessToken, igBusinessAccountId, igUserId, node.message, options);
+    } catch (err) {
+      console.error("[instagram-webhook] falha ao enviar botões do funil:", err);
+      return; // sem a mensagem sair, não faz sentido ficar esperando clique
+    }
+    const funnel = await db.query.instagramFunnels.findFirst({ where: eq(instagramFunnels.id, funnelId) });
+    if (!funnel) return;
+    await db
+      .insert(instagramFunnelSessions)
+      .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
+      .onConflictDoUpdate({
+        target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
+        set: { funnelId, currentNodeId: node.id, leadId, updatedAt: new Date().toISOString() },
+      });
   }
 }
 
@@ -296,6 +331,38 @@ async function sendDirectMessage(accessToken: string, igBusinessAccountId: strin
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ recipient: { id: igUserId }, message: { text } }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Meta retornou ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
+// Limites documentados da Meta pra quick_replies: até 13 botões, título até
+// 20 caracteres (truncado depois disso). Já validado no editor, mas
+// truncado aqui também — defensivo contra dado antigo/salvo por outro caminho.
+async function sendDirectMessageWithQuickReplies(
+  accessToken: string,
+  igBusinessAccountId: string,
+  igUserId: string,
+  text: string,
+  options: { id: string; label: string }[]
+): Promise<void> {
+  const url = `${BASE_URL}/${igBusinessAccountId}/messages?access_token=${encodeURIComponent(accessToken)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { id: igUserId },
+      message: {
+        text,
+        quick_replies: options.slice(0, 13).map((o) => ({
+          content_type: "text",
+          title: o.label.slice(0, 20),
+          payload: o.id,
+        })),
+      },
+    }),
   });
   if (!res.ok) {
     const body = await res.text();

@@ -1,0 +1,1 @@
+ALTER TABLE "instagram_funnel_nodes" ADD COLUMN "quick_reply_options" jsonb DEFAULT '[]'::jsonb NOT NULL;

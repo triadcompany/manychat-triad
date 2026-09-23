@@ -357,7 +357,7 @@ export async function deleteFunnel(id: string): Promise<void> {
 
 export interface FunnelNodeRow {
   id: string;
-  type: "trigger" | "message" | "condition";
+  type: "trigger" | "message" | "condition" | "quick_reply";
   position_x: number;
   position_y: number;
   message: string | null;
@@ -366,6 +366,7 @@ export interface FunnelNodeRow {
   file_filename: string | null;
   condition_keywords: { id: string; keyword: string }[];
   condition_use_ai: boolean;
+  quick_reply_options: { id: string; label: string }[];
 }
 
 export interface FunnelEdgeRow {
@@ -390,7 +391,7 @@ const _fetchFunnelGraph = createServerFn({ method: "GET" })
     return {
       nodes: nodeRows.map((n) => ({
         id: n.id,
-        type: n.type as "trigger" | "message" | "condition",
+        type: n.type as "trigger" | "message" | "condition" | "quick_reply",
         position_x: n.positionX,
         position_y: n.positionY,
         message: n.message,
@@ -399,6 +400,7 @@ const _fetchFunnelGraph = createServerFn({ method: "GET" })
         file_filename: n.fileFilename,
         condition_keywords: (n.conditionKeywords as { id: string; keyword: string }[] | null) ?? [],
         condition_use_ai: n.conditionUseAi,
+        quick_reply_options: (n.quickReplyOptions as { id: string; label: string }[] | null) ?? [],
       })),
       edges: edgeRows.map((e) => ({ id: e.id, source_node_id: e.sourceNodeId, source_handle: e.sourceHandle, target_node_id: e.targetNodeId })),
     };
@@ -413,7 +415,7 @@ const saveGraphSchema = z.object({
   nodes: z.array(
     z.object({
       id: z.string(),
-      type: z.enum(["trigger", "message", "condition"]),
+      type: z.enum(["trigger", "message", "condition", "quick_reply"]),
       position_x: z.number(),
       position_y: z.number(),
       message: z.string().nullable().optional(),
@@ -422,6 +424,9 @@ const saveGraphSchema = z.object({
       file_filename: z.string().nullable().optional(),
       condition_keywords: z.array(z.object({ id: z.string(), keyword: z.string() })).optional(),
       condition_use_ai: z.boolean().optional(),
+      // Limites da API de quick_replies da Meta: até 13 botões, rótulo até
+      // 20 caracteres — mesmo validado no editor, reforçado aqui.
+      quick_reply_options: z.array(z.object({ id: z.string(), label: z.string().max(20) })).max(13).optional(),
     })
   ),
   edges: z.array(
@@ -458,12 +463,13 @@ const _saveFunnelGraph = createServerFn({ method: "POST" })
             type: n.type,
             positionX: Math.round(n.position_x),
             positionY: Math.round(n.position_y),
-            message: n.type === "message" ? (n.message ?? null) : null,
+            message: n.type === "message" || n.type === "quick_reply" ? (n.message ?? null) : null,
             fileBase64: n.type === "message" ? (n.file_base64 ?? null) : null,
             fileMimetype: n.type === "message" ? (n.file_mimetype ?? null) : null,
             fileFilename: n.type === "message" ? (n.file_filename ?? null) : null,
             conditionKeywords: n.type === "condition" ? (n.condition_keywords ?? []) : [],
             conditionUseAi: n.type === "condition" ? (n.condition_use_ai ?? false) : false,
+            quickReplyOptions: n.type === "quick_reply" ? (n.quick_reply_options ?? []) : [],
           }))
         );
       }

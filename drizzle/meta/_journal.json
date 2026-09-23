@@ -8,6 +8,13 @@
       "when": 1790117705730,
       "tag": "0000_smiling_rage",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790132906189,
+      "tag": "0001_daily_venus",
+      "breakpoints": true
     }
   ]
 }
