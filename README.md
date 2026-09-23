@@ -8,7 +8,7 @@ Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave nu
 
 Projeto TanStack Start + Nitro independente, roda sozinho (`npm run dev` / `npm run build && npm start`) com banco Postgres próprio, separado do app original. Ver `docs/2026-09-22-saas-scaffolding-design.md` pro design dessa fase.
 
-Qualquer empresa já consegue se cadastrar em `/cadastro` e usar o funil isolada das demais — o gate que travava tudo só pra Triad Company saiu (ver `docs/2026-09-22-saas-self-service-auth-design.md`). O que ainda falta pra virar SaaS de verdade é a conexão do Instagram, que continua manual (colar token gerado à mão) — precisa virar OAuth de verdade, próxima fase.
+Qualquer empresa já consegue se cadastrar em `/cadastro`, usar o funil isolada das demais, e conectar a própria conta do Instagram clicando em um botão — sem colar token à mão (ver `docs/2026-09-22-saas-self-service-auth-design.md` e `docs/2026-09-22-instagram-oauth-design.md`). O que falta pra abrir pra qualquer cliente de verdade é o App Review da Meta (processo com a Meta, não código — ver "O que falta" abaixo).
 
 ### Rodando local
 
@@ -32,6 +32,10 @@ src/
     instagram-webhook.ts       # motor de execução — recebe comentário/DM da Meta, roda o funil
     instagram-webhook.route.ts # handler Nitro/h3 do webhook (verificação + validação HMAC)
     instagram-files.route.ts   # serve anexo (ex: PDF) de um bloco de mensagem pra Meta buscar
+    instagram-oauth.ts         # helpers do fluxo OAuth (troca code -> token curto -> longo, renovação)
+    instagram-connect.route.ts   # GET /api/instagram/connect — inicia o "Conectar Instagram"
+    instagram-callback.route.ts  # GET /api/instagram/callback — troca o code, salva a conexão
+    instagram-refresh-tokens.route.ts  # GET /api/instagram/refresh-tokens — renovação via cron externo
     session.ts                 # auth (JWT em cookie) — login, signup (self-service), sessão
     settings.ts                 # chave da OpenAI por organização (app_config)
   lib/
@@ -40,7 +44,7 @@ src/
   routes/
     __root.tsx                            # shell HTML, providers, guard de sessão
     login.tsx / cadastro.tsx / index.tsx  # login, cadastro self-service, redirect pra /admin/instagram-funil
-    admin.instagram-conexao.tsx           # tela de conectar a conta do Instagram (ainda manual)
+    admin.instagram-conexao.tsx           # botão Conectar/Desconectar Instagram (OAuth)
     admin.instagram-funil.tsx             # abas Regras / Funis / Leads
     admin.instagram-funil-editor.$funnelId.tsx  # editor visual (React Flow) dos blocos do funil
     admin.configuracoes.tsx               # chave da OpenAI
@@ -63,18 +67,19 @@ docs/           # specs de design (funil, funil visual, scaffolding SaaS, auth s
 
 ## O que falta pra virar SaaS de verdade
 
-Resolvido: scaffolding (projeto TanStack Start + Nitro rodável, banco próprio) e cadastro self-service + multi-tenant sem gate de platform admin (ver `docs/2026-09-22-saas-scaffolding-design.md` e `docs/2026-09-22-saas-self-service-auth-design.md`).
+Resolvido: scaffolding, cadastro self-service + multi-tenant sem gate de platform admin, e conexão do Instagram via OAuth (ver `docs/2026-09-22-saas-scaffolding-design.md`, `docs/2026-09-22-saas-self-service-auth-design.md` e `docs/2026-09-22-instagram-oauth-design.md`).
 
 Ainda falta:
 
-1. **Conexão do Instagram via OAuth** — hoje ainda é colar token de longa duração à mão (`admin.instagram-conexao.tsx`); precisa virar "Login with Instagram" de verdade, senão cada cliente novo depende de vocês gerando o token pra ele.
-2. **Meta Developers**: cada tenant precisaria de App Review da Meta pra sair do modo "Standard Access" (hoje funciona sem review só porque a conta é adicionada manualmente como Tester no app da Triad — não escala pra SaaS multi-cliente).
+1. **App Review da Meta**: hoje o fluxo OAuth só funciona pra contas cadastradas manualmente como Tester do app (modo "Standard Access"/Development). Pra qualquer cliente conseguir clicar em "Conectar Instagram" e funcionar, o app precisa passar pela revisão da Meta das permissões `instagram_business_basic`/`instagram_business_manage_messages`/`instagram_business_manage_comments` — processo com a Meta, não código, mas depende do fluxo OAuth funcionando de verdade (vídeo de demo).
+2. **Cron de renovação de token**: o endpoint `/api/instagram/refresh-tokens` existe, mas o agendamento em si (workflow n8n batendo nele 1x/dia) ainda precisa ser configurado.
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
+5. **Automation mais rico (estilo ManyChat)** — próxima área do roadmap: mais tipos de bloco e gatilhos no editor de funil, pra chegar mais perto do que o ManyChat oferece.
 
 ## Referência rápida da API do Instagram usada
 
-- Host: `https://graph.instagram.com` (fluxo "Instagram Login", sem Facebook Page — **não** `graph.facebook.com`).
+- Host: `https://graph.instagram.com` pras chamadas de dados/mensagens (fluxo "Instagram Login", sem Facebook Page — **não** `graph.facebook.com`); `https://www.instagram.com/oauth/authorize` pra autorização e `https://api.instagram.com/oauth/access_token` pra trocar o code pelo token curto (ver `instagram-oauth.ts`).
 - Permissões: `instagram_business_basic` + `instagram_business_manage_messages` (mensagens); `instagram_business_manage_comments` (resposta pública a comentário).
 - Resposta privada a comentário: `POST /{ig-business-id}/messages` com `{recipient: {comment_id}, message: {text}}` — 1 por comentário, até 7 dias depois.
 - DM numa conversa já aberta: mesmo endpoint com `{recipient: {id: igUserId}, message: {...}}`.
