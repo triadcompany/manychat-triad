@@ -2,7 +2,7 @@
 
 Funil de vendas via Instagram (comentário → Direct → fluxo em blocos) — extraído do app interno **gestor-trafego-triad** como ponto de partida pra virar um produto próprio.
 
-Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave num post, o sistema manda uma mensagem no Direct automaticamente (tipo Manychat) e a conversa pode seguir por um funil visual (blocos de Gatilho → Mensagem → Condição, com ramificação por palavra-chave ou por IA).
+Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave num post, o sistema manda uma mensagem no Direct automaticamente (tipo Manychat) e a conversa pode seguir por um funil visual (blocos de Gatilho → Mensagem → Condição → Botões, com ramificação por palavra-chave, IA ou clique em botão).
 
 ## Estado deste repositório
 
@@ -22,6 +22,10 @@ npm run dev
 Depois, crie uma conta em `/cadastro` (self-service) ou, se precisar do
 platform admin inicial (Triad Company): `npm run create-user -- voce@exemplo.com "sua-senha" "Seu Nome"`.
 Recuperação de senha ainda é manual: `npm run reset-password -- email nova-senha`.
+
+Se já tinha um banco de antes da Fase 4 (bloco Botões), rode
+`npm run db:migrate` de novo pra aplicar `drizzle/0001_daily_venus.sql`
+(coluna nova em `instagram_funnel_nodes`).
 
 ## Estrutura
 
@@ -75,7 +79,7 @@ Ainda falta:
 2. **Cron de renovação de token**: o endpoint `/api/instagram/refresh-tokens` existe, mas o agendamento em si (workflow n8n batendo nele 1x/dia) ainda precisa ser configurado.
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
-5. **Automation mais rico (estilo ManyChat)** — próxima área do roadmap: mais tipos de bloco e gatilhos no editor de funil, pra chegar mais perto do que o ManyChat oferece.
+5. **Automation mais rico (estilo ManyChat)** — bloco Botões (quick replies) já implementado (ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`); Smart Delay, Ir para outro funil e Tags/Audience seguem no roadmap, nessa ordem.
 
 ## Referência rápida da API do Instagram usada
 
