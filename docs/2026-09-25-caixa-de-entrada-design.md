@@ -22,11 +22,14 @@ time **pausa a automação** pra aquele contato (apaga qualquer sessão de
 funil em andamento), pra não correr o risco do bot mandar mensagem em cima
 de quem já está atendendo manualmente.
 
-**Fora de escopo**: como a API de mensagens do Instagram só devolve o ID
-numérico de quem manda DM (username só vem em evento de comentário), não
-vamos fazer uma chamada extra à API só pra descobrir nome de usuário de
-quem nunca comentou — mostra o ID cru nesse caso, mesmo comportamento que a
-aba Leads já tem hoje.
+**Atualizado depois do teste em produção**: a API de mensagens do Instagram
+só devolve o ID numérico de quem manda DM (username só vem em evento de
+comentário) — inicialmente essa fase deixou isso fora de escopo e mostrava
+o ID cru. Adicionado depois: `fetchInstagramUsername` (em
+`instagram-webhook.ts`) busca o username numa chamada à parte
+(`GET /{ig-user-id}?fields=username`), só quando ainda não é conhecido pra
+aquele contato — best-effort, só funciona pra quem interagiu recentemente
+(janela de retenção da Meta), falha não trava o registro da mensagem.
 
 ## Schema
 

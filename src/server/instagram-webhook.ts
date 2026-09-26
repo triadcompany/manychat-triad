@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import {
   appConfig,
   instagramConnections,
+  instagramConversations,
   instagramFunnelLeads,
   instagramFunnelRules,
   instagramFunnels,
@@ -103,7 +104,18 @@ export async function handleInstagramWebhook(body: InstagramWebhookBody): Promis
         where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
       });
       if (loggingConnection?.active) {
-        await logMessage(loggingConnection.organizationId, senderId, "in", text, null, {
+        // A API de mensagens não devolve username junto do evento — só
+        // descobre com uma chamada à parte. Só busca se ainda não sabe (evita
+        // bater na API a cada mensagem de uma conversa já identificada).
+        const existingConversation = await db.query.instagramConversations.findFirst({
+          where: and(
+            eq(instagramConversations.organizationId, loggingConnection.organizationId),
+            eq(instagramConversations.igUserId, senderId)
+          ),
+        });
+        const username =
+          existingConversation?.igUsername ?? (await fetchInstagramUsername(loggingConnection.accessToken, senderId));
+        await logMessage(loggingConnection.organizationId, senderId, "in", text, username, {
           type: storyId ? "story_reply" : "direct",
         });
       }
@@ -489,6 +501,22 @@ async function sendFileMessage(accessToken: string, igBusinessAccountId: string,
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Meta retornou ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
+// Busca o username de quem mandou uma DM — a API de mensagens não devolve
+// isso junto do evento, só via chamada à parte. Best-effort: só funciona
+// pra quem já interagiu recentemente com a conta (janela de retenção da
+// Meta), então uma falha aqui não deve travar o registro da mensagem.
+async function fetchInstagramUsername(accessToken: string, igUserId: string): Promise<string | null> {
+  try {
+    const url = `${BASE_URL}/${igUserId}?fields=username&access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { username?: string };
+    return data.username ?? null;
+  } catch {
+    return null;
   }
 }
 
