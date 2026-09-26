@@ -92,16 +92,22 @@ export async function handleInstagramWebhook(body: InstagramWebhookBody): Promis
       // ignora, senão o funil reagiria à mensagem que ele mesmo mandou.
       if (!senderId || !text || event.message?.is_echo || senderId === igBusinessAccountId) continue;
 
+      const storyId = event.message?.reply_to?.story?.id;
+
       // Loga toda mensagem recebida na Caixa de Entrada, tenha disparado
       // algo ou não — só comentário fica de fora (esse aqui é sempre DM).
+      // Origem aqui é só o tipo (story_reply/direct) — a palavra-chave da
+      // regra, se houver, é preenchida depois via processStoryReply (o
+      // casamento de regra só acontece lá).
       const loggingConnection = await db.query.instagramConnections.findFirst({
         where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
       });
       if (loggingConnection?.active) {
-        await logMessage(loggingConnection.organizationId, senderId, "in", text);
+        await logMessage(loggingConnection.organizationId, senderId, "in", text, null, {
+          type: storyId ? "story_reply" : "direct",
+        });
       }
 
-      const storyId = event.message?.reply_to?.story?.id;
       if (storyId) {
         // Resposta a story é sempre gatilho novo, nunca continuação de
         // sessão pausada — mesma separação que já existe entre comentário e
@@ -142,7 +148,10 @@ async function processComment(
   let errorMessage: string | null = null;
   try {
     await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message);
-    await logMessage(connection.organizationId, comment.fromId, "out", rule.message, comment.fromUsername);
+    await logMessage(connection.organizationId, comment.fromId, "out", rule.message, comment.fromUsername, {
+      type: "comment",
+      detail: rule.keyword,
+    });
   } catch (err) {
     status = "failed";
     errorMessage = err instanceof Error ? err.message : String(err);
@@ -214,7 +223,10 @@ async function processStoryReply(
   let errorMessage: string | null = null;
   try {
     await sendDirectMessage(connection.accessToken, igBusinessAccountId, reply.fromId, rule.message);
-    await logMessage(connection.organizationId, reply.fromId, "out", rule.message);
+    await logMessage(connection.organizationId, reply.fromId, "out", rule.message, null, {
+      type: "story_reply",
+      detail: rule.keyword,
+    });
   } catch (err) {
     status = "failed";
     errorMessage = err instanceof Error ? err.message : String(err);

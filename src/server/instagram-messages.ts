@@ -1,9 +1,14 @@
 import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
 import { instagramConnections, instagramConversations, instagramMessages, instagramFunnelSessions } from "@/db/schema";
 import { requireOrgContext } from "@/server/session";
+
+export interface MessageSource {
+  type: "comment" | "story_reply" | "direct";
+  detail?: string | null;
+}
 
 const BASE_URL = "https://graph.instagram.com";
 
@@ -18,18 +23,30 @@ export const logMessage = createServerOnlyFn(async (
   igUserId: string,
   direction: "in" | "out",
   text: string,
-  igUsername?: string | null
+  igUsername?: string | null,
+  source?: MessageSource
 ): Promise<void> => {
   const preview = text.slice(0, 200);
   const [conversation] = await db
     .insert(instagramConversations)
-    .values({ organizationId, igUserId, igUsername: igUsername ?? null, lastMessagePreview: preview })
+    .values({
+      organizationId,
+      igUserId,
+      igUsername: igUsername ?? null,
+      lastMessagePreview: preview,
+      sourceType: source?.type ?? null,
+      sourceDetail: source?.detail ?? null,
+    })
     .onConflictDoUpdate({
       target: [instagramConversations.organizationId, instagramConversations.igUserId],
       set: {
         lastMessagePreview: preview,
         lastMessageAt: new Date().toISOString(),
         ...(igUsername ? { igUsername } : {}),
+        // Backfill do detalhe (palavra-chave) só se a conversa ainda não tinha
+        // um — necessário pra resposta a story, que loga a entrada genérica
+        // (sem regra casada ainda) antes de saber qual regra bateu.
+        ...(source?.detail ? { sourceDetail: sql`coalesce(${instagramConversations.sourceDetail}, ${source.detail})` } : {}),
       },
     })
     .returning({ id: instagramConversations.id });

@@ -29,6 +29,13 @@
       "when": 1790383699757,
       "tag": "0003_typical_kid_colt",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790384918420,
+      "tag": "0004_chubby_thunderbolt_ross",
+      "breakpoints": true
     }
   ]
 }

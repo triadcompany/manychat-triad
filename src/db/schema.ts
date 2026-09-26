@@ -241,6 +241,12 @@ export const instagramConversations = pgTable(
     igUsername: text("ig_username"),
     lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
     lastMessagePreview: text("last_message_preview").notNull(),
+    // Origem do lead (Fase 8 — Contatos) — preenchido só na criação, nunca
+    // sobrescrito depois (mesmo princípio de snapshot permanente que
+    // instagram_funnel_leads já usa). Nulo pra conversa criada antes dessa
+    // fase, sem como reconstruir retroativamente.
+    sourceType: text("source_type"), // "comment" | "story_reply" | "direct"
+    sourceDetail: text("source_detail"), // palavra-chave da regra que bateu, se houver
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [unique("instagram_conversations_user_key").on(t.organizationId, t.igUserId)]
@@ -256,6 +262,39 @@ export const instagramMessages = pgTable("instagram_messages", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ── Contatos ─────────────────────────────────────────────────────────────
+// Tags livres por organização, atribuídas a conversas (= contatos) pra
+// segmentação manual.
+
+export const instagramTags = pgTable(
+  "instagram_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color").notNull(), // hex de uma paleta fixa, validada no server
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("instagram_tags_org_name_key").on(t.organizationId, t.name)]
+);
+
+export const instagramContactTags = pgTable(
+  "instagram_contact_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => instagramConversations.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => instagramTags.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("instagram_contact_tags_key").on(t.conversationId, t.tagId)]
+);
+
 // --- relations (usadas pelos joins via db.query.*) ---
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -265,6 +304,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   instagramFunnelRules: many(instagramFunnelRules),
   instagramFunnels: many(instagramFunnels),
   instagramConversations: many(instagramConversations),
+  instagramTags: many(instagramTags),
 }));
 
 export const usersRelations = relations(users, ({ one }) => ({
@@ -316,8 +356,19 @@ export const instagramFunnelSessionsRelations = relations(instagramFunnelSession
 export const instagramConversationsRelations = relations(instagramConversations, ({ one, many }) => ({
   organization: one(organizations, { fields: [instagramConversations.organizationId], references: [organizations.id] }),
   messages: many(instagramMessages),
+  contactTags: many(instagramContactTags),
 }));
 
 export const instagramMessagesRelations = relations(instagramMessages, ({ one }) => ({
   conversation: one(instagramConversations, { fields: [instagramMessages.conversationId], references: [instagramConversations.id] }),
+}));
+
+export const instagramTagsRelations = relations(instagramTags, ({ one, many }) => ({
+  organization: one(organizations, { fields: [instagramTags.organizationId], references: [organizations.id] }),
+  contactTags: many(instagramContactTags),
+}));
+
+export const instagramContactTagsRelations = relations(instagramContactTags, ({ one }) => ({
+  conversation: one(instagramConversations, { fields: [instagramContactTags.conversationId], references: [instagramConversations.id] }),
+  tag: one(instagramTags, { fields: [instagramContactTags.tagId], references: [instagramTags.id] }),
 }));

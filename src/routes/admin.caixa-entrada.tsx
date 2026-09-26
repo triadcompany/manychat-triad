@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/admin/caixa-entrada")({
   head: () => ({ meta: [{ title: "Caixa de Entrada — Admin" }] }),
+  validateSearch: z.object({ ig: z.string().optional() }),
   component: CaixaEntradaPage,
 });
 
@@ -19,7 +21,8 @@ function formatTime(iso: string): string {
 }
 
 function CaixaEntradaPage() {
-  const [selected, setSelected] = useState<string | null>(null);
+  const { ig } = Route.useSearch();
+  const [selected, setSelected] = useState<string | null>(ig ?? null);
 
   const { data: conversations = [] } = useQuery({
     queryKey: ["instagram-conversations"],
