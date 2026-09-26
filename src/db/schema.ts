@@ -224,6 +224,38 @@ export const instagramFunnelSessions = pgTable(
   ]
 );
 
+// ── Caixa de Entrada ─────────────────────────────────────────────────────
+// Histórico de Direct — toda mensagem recebida ou enviada, tenha disparado
+// automação ou não. Comentário não entra aqui (fica só em instagram_funnel_leads).
+
+export const instagramConversations = pgTable(
+  "instagram_conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    igUserId: text("ig_user_id").notNull(),
+    // Só preenchido se a pessoa já comentou alguma vez (reaproveitado de
+    // instagram_funnel_leads) — a API de mensagens não devolve username.
+    igUsername: text("ig_username"),
+    lastMessageAt: timestamp("last_message_at").defaultNow().notNull(),
+    lastMessagePreview: text("last_message_preview").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [unique("instagram_conversations_user_key").on(t.organizationId, t.igUserId)]
+);
+
+export const instagramMessages = pgTable("instagram_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  conversationId: uuid("conversation_id")
+    .notNull()
+    .references(() => instagramConversations.id, { onDelete: "cascade" }),
+  direction: text("direction").notNull(), // "in" | "out"
+  text: text("text").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // --- relations (usadas pelos joins via db.query.*) ---
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
@@ -232,6 +264,7 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   instagramConnections: many(instagramConnections),
   instagramFunnelRules: many(instagramFunnelRules),
   instagramFunnels: many(instagramFunnels),
+  instagramConversations: many(instagramConversations),
 }));
 
 export const usersRelations = relations(users, ({ one }) => ({
@@ -278,4 +311,13 @@ export const instagramFunnelSessionsRelations = relations(instagramFunnelSession
   funnel: one(instagramFunnels, { fields: [instagramFunnelSessions.funnelId], references: [instagramFunnels.id] }),
   currentNode: one(instagramFunnelNodes, { fields: [instagramFunnelSessions.currentNodeId], references: [instagramFunnelNodes.id] }),
   lead: one(instagramFunnelLeads, { fields: [instagramFunnelSessions.leadId], references: [instagramFunnelLeads.id] }),
+}));
+
+export const instagramConversationsRelations = relations(instagramConversations, ({ one, many }) => ({
+  organization: one(organizations, { fields: [instagramConversations.organizationId], references: [organizations.id] }),
+  messages: many(instagramMessages),
+}));
+
+export const instagramMessagesRelations = relations(instagramMessages, ({ one }) => ({
+  conversation: one(instagramConversations, { fields: [instagramMessages.conversationId], references: [instagramConversations.id] }),
 }));

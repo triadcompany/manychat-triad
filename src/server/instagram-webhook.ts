@@ -11,6 +11,7 @@ import {
   instagramFunnelEdges,
   instagramFunnelSessions,
 } from "@/db/schema";
+import { logMessage } from "./instagram-messages";
 
 // Recebe os webhooks do Instagram (campo `comments`) — não passa por sessão,
 // a conta do Instagram (via `entry[].id`) identifica a organização. Ver spec
@@ -91,6 +92,15 @@ export async function handleInstagramWebhook(body: InstagramWebhookBody): Promis
       // ignora, senão o funil reagiria à mensagem que ele mesmo mandou.
       if (!senderId || !text || event.message?.is_echo || senderId === igBusinessAccountId) continue;
 
+      // Loga toda mensagem recebida na Caixa de Entrada, tenha disparado
+      // algo ou não — só comentário fica de fora (esse aqui é sempre DM).
+      const loggingConnection = await db.query.instagramConnections.findFirst({
+        where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
+      });
+      if (loggingConnection?.active) {
+        await logMessage(loggingConnection.organizationId, senderId, "in", text);
+      }
+
       const storyId = event.message?.reply_to?.story?.id;
       if (storyId) {
         // Resposta a story é sempre gatilho novo, nunca continuação de
@@ -132,6 +142,7 @@ async function processComment(
   let errorMessage: string | null = null;
   try {
     await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message);
+    await logMessage(connection.organizationId, comment.fromId, "out", rule.message, comment.fromUsername);
   } catch (err) {
     status = "failed";
     errorMessage = err instanceof Error ? err.message : String(err);
@@ -203,6 +214,7 @@ async function processStoryReply(
   let errorMessage: string | null = null;
   try {
     await sendDirectMessage(connection.accessToken, igBusinessAccountId, reply.fromId, rule.message);
+    await logMessage(connection.organizationId, reply.fromId, "out", rule.message);
   } catch (err) {
     status = "failed";
     errorMessage = err instanceof Error ? err.message : String(err);
@@ -339,6 +351,10 @@ async function advanceFunnel(
 ): Promise<void> {
   const node = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, nodeId) });
   if (!node) return;
+  // Buscado uma vez só e reaproveitado nos 3 branches — só precisa do
+  // organizationId (pra sessão e pro log da Caixa de Entrada).
+  const funnel = await db.query.instagramFunnels.findFirst({ where: eq(instagramFunnels.id, funnelId) });
+  if (!funnel) return;
 
   if (node.type === "message") {
     try {
@@ -348,8 +364,10 @@ async function advanceFunnel(
         const appUrl = process.env.APP_URL;
         if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
         await sendFileMessage(accessToken, igBusinessAccountId, igUserId, `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`);
+        await logMessage(funnel.organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`);
       } else if (node.message) {
         await sendDirectMessage(accessToken, igBusinessAccountId, igUserId, node.message);
+        await logMessage(funnel.organizationId, igUserId, "out", node.message);
       }
     } catch (err) {
       console.error("[instagram-webhook] falha ao enviar mensagem do funil:", err);
@@ -361,8 +379,6 @@ async function advanceFunnel(
   }
 
   if (node.type === "condition") {
-    const funnel = await db.query.instagramFunnels.findFirst({ where: eq(instagramFunnels.id, funnelId) });
-    if (!funnel) return;
     await db
       .insert(instagramFunnelSessions)
       .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
@@ -378,12 +394,11 @@ async function advanceFunnel(
     const options = ((node.quickReplyOptions as { id: string; label: string }[] | null) ?? []).slice(0, 13);
     try {
       await sendDirectMessageWithQuickReplies(accessToken, igBusinessAccountId, igUserId, node.message, options);
+      await logMessage(funnel.organizationId, igUserId, "out", node.message);
     } catch (err) {
       console.error("[instagram-webhook] falha ao enviar botões do funil:", err);
       return; // sem a mensagem sair, não faz sentido ficar esperando clique
     }
-    const funnel = await db.query.instagramFunnels.findFirst({ where: eq(instagramFunnels.id, funnelId) });
-    if (!funnel) return;
     await db
       .insert(instagramFunnelSessions)
       .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
