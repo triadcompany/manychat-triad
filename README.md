@@ -1,6 +1,6 @@
-# manychat-triad
+# manychat-triad (produto: **DirectFlow**)
 
-Funil de vendas via Instagram (comentário → Direct → fluxo em blocos) — extraído do app interno **gestor-trafego-triad** como ponto de partida pra virar um produto próprio.
+Funil de vendas via Instagram (comentário → Direct → fluxo em blocos) — extraído do app interno **gestor-trafego-triad** como ponto de partida pra virar um produto próprio, hoje comercializado como **DirectFlow** (nome de marca; o repositório/pacote ainda não foi rebatizado no código).
 
 Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave num post, o sistema manda uma mensagem no Direct automaticamente (tipo Manychat) e a conversa pode seguir por um funil visual (blocos de Gatilho → Mensagem → Condição → Botões, com ramificação por palavra-chave, IA ou clique em botão).
 
@@ -47,13 +47,16 @@ src/
     utils.ts                    # helper cn() do shadcn
   routes/
     __root.tsx                            # shell HTML, providers, guard de sessão
-    login.tsx / cadastro.tsx / index.tsx  # login, cadastro self-service, redirect pra /admin/instagram-funil
-    admin.instagram-conexao.tsx           # botão Conectar/Desconectar Instagram (OAuth)
-    admin.instagram-funil.tsx             # abas Regras / Funis / Leads
+    login.tsx / cadastro.tsx / index.tsx  # login, cadastro self-service, redirect pra /admin/inicio
+    admin.inicio.tsx                      # saudação + status da conexão + atalhos
+    admin.contatos.tsx / admin.caixa-entrada.tsx  # placeholders "Em breve"
+    admin.instagram-conexao.tsx           # redirect puro pra /admin/configuracoes (rota antiga)
+    admin.instagram-funil.tsx             # abas Regras / Funis / Leads ("Automação" na navegação)
     admin.instagram-funil-editor.$funnelId.tsx  # editor visual (React Flow) dos blocos do funil
-    admin.configuracoes.tsx               # chave da OpenAI
+    admin.configuracoes.tsx               # abas: Conexão Instagram + chave da OpenAI
   components/
-    AppShell.tsx                # header + navegação, enxuto (só este produto)
+    AppShell.tsx                # barra lateral (estilo ManyChat) — Início/Contatos/Automação/Caixa de Entrada/Configurações
+    EmBreve.tsx                  # placeholder compartilhado das seções ainda não construídas
     ui/                          # shadcn (new-york), só os componentes usados aqui
   db/
     schema.ts   # schema Drizzle podado — só as tabelas deste produto (ver lista abaixo)
@@ -79,7 +82,8 @@ Ainda falta:
 2. **Cron de renovação de token**: o endpoint `/api/instagram/refresh-tokens` existe, mas o agendamento em si (workflow n8n batendo nele 1x/dia) ainda precisa ser configurado.
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
-5. **Automation mais rico (estilo ManyChat)** — bloco Botões (quick replies) já implementado (ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`); Smart Delay, Ir para outro funil e Tags/Audience seguem no roadmap, nessa ordem.
+5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Contatos e Caixa de Entrada hoje são só placeholder "Em breve", sem funcionalidade real ainda.
+6. **Automation mais rico** — bloco Botões (quick replies) já implementado (ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`); construtor em formato de assistente (wizard, mais simples que o editor visual atual), Insights/analytics por automação, Smart Delay, Ir para outro funil e Tags seguem no roadmap.
 
 ## Referência rápida da API do Instagram usada
 
