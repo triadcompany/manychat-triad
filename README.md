@@ -2,7 +2,7 @@
 
 Funil de vendas via Instagram (comentário → Direct → fluxo em blocos) — extraído do app interno **gestor-trafego-triad** como ponto de partida pra virar um produto próprio, hoje comercializado como **DirectFlow** (nome de marca; o repositório/pacote ainda não foi rebatizado no código).
 
-Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave num post, o sistema manda uma mensagem no Direct automaticamente (tipo Manychat) e a conversa pode seguir por um funil visual (blocos de Gatilho → Mensagem → Condição → Botões, com ramificação por palavra-chave, IA ou clique em botão).
+Ideia original: dentro do Instagram, quando alguém comenta uma palavra-chave num post (ou responde a um story) o sistema manda uma mensagem no Direct automaticamente (tipo Manychat) e a conversa pode seguir por um funil visual (blocos de Gatilho → Mensagem → Condição → Botões, com ramificação por palavra-chave, IA ou clique em botão).
 
 ## Estado deste repositório
 
@@ -23,9 +23,10 @@ Depois, crie uma conta em `/cadastro` (self-service) ou, se precisar do
 platform admin inicial (Triad Company): `npm run create-user -- voce@exemplo.com "sua-senha" "Seu Nome"`.
 Recuperação de senha ainda é manual: `npm run reset-password -- email nova-senha`.
 
-Se já tinha um banco de antes da Fase 4 (bloco Botões), rode
-`npm run db:migrate` de novo pra aplicar `drizzle/0001_daily_venus.sql`
-(coluna nova em `instagram_funnel_nodes`).
+Se já tinha um banco de antes, rode `npm run db:migrate` de novo pra pegar
+as migrações que faltam: `drizzle/0001_daily_venus.sql` (bloco Botões, Fase
+4) e `drizzle/0002_robust_blazing_skull.sql` (gatilho Resposta ao story,
+Fase 6).
 
 ## Estrutura
 
@@ -83,7 +84,7 @@ Ainda falta:
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
 5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Contatos e Caixa de Entrada hoje são só placeholder "Em breve", sem funcionalidade real ainda.
-6. **Automation mais rico** — bloco Botões (quick replies) já implementado (ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`); Insights/analytics por automação, Smart Delay, Ir para outro funil e Tags seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
+6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`) e gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) já implementados; Insights/analytics por automação, Smart Delay, Ir para outro funil e Tags seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
 
 ## Referência rápida da API do Instagram usada
 
@@ -92,5 +93,6 @@ Ainda falta:
 - Resposta privada a comentário: `POST /{ig-business-id}/messages` com `{recipient: {comment_id}, message: {text}}` — 1 por comentário, até 7 dias depois.
 - DM numa conversa já aberta: mesmo endpoint com `{recipient: {id: igUserId}, message: {...}}`.
 - Anexo (ex. PDF): `{recipient: {id}, message: {attachment: {type: "file", payload: {url}}}}` — a Meta busca a URL, precisa ser pública, até 25MB.
+- Resposta a story: chega no mesmo webhook de mensagens (campo `messages`, já assinado — sem inscrição extra), com `message.reply_to.story = {id, url}` em vez de `reply_to.mid` (resposta a mensagem normal).
 - Resposta pública a comentário: `POST /{comment-id}/replies` com `{message}`.
 - Webhook: `entry[].changes[]` (campo `comments`) pra comentários; `entry[].messaging[]` pra DMs — filtrar `message.is_echo` pra não reprocessar a própria mensagem enviada.
