@@ -108,7 +108,8 @@ export async function fetchRecentInstagramPosts(): Promise<InstagramPostRow[]> {
 
 export interface FunnelRuleRow {
   id: string;
-  post_id: string;
+  trigger_type: "comment" | "story_reply";
+  post_id: string | null;
   post_thumbnail_url: string | null;
   post_permalink: string | null;
   keyword: string;
@@ -128,6 +129,7 @@ const _fetchFunnelRules = createServerFn({ method: "GET" }).handler(async (): Pr
     .orderBy(desc(instagramFunnelRules.createdAt));
   return rows.map((r) => ({
     id: r.id,
+    trigger_type: r.triggerType as "comment" | "story_reply",
     post_id: r.postId,
     post_thumbnail_url: r.postThumbnailUrl,
     post_permalink: r.postPermalink,
@@ -145,33 +147,41 @@ export async function fetchFunnelRules(): Promise<FunnelRuleRow[]> {
 }
 
 const createRuleSchema = z.object({
-  post_id: z.string().min(1),
+  trigger_type: z.enum(["comment", "story_reply"]),
+  post_id: z.string().nullable().optional(),
   post_thumbnail_url: z.string().nullable().optional(),
   post_permalink: z.string().nullable().optional(),
   keyword: z.string().min(1),
   message: z.string().min(1),
   public_reply: z.string().nullable().optional(),
   funnel_id: z.string().nullable().optional(),
+}).refine((data) => data.trigger_type !== "comment" || !!data.post_id, {
+  message: "post_id é obrigatório pra regra de comentário.",
+  path: ["post_id"],
 });
 
 const _createFunnelRule = createServerFn({ method: "POST" })
   .inputValidator(createRuleSchema)
   .handler(async ({ data }) => {
     const { organizationId } = await requireOrgContext();
+    const isComment = data.trigger_type === "comment";
     await db.insert(instagramFunnelRules).values({
       organizationId,
-      postId: data.post_id,
-      postThumbnailUrl: data.post_thumbnail_url ?? null,
-      postPermalink: data.post_permalink ?? null,
+      triggerType: data.trigger_type,
+      postId: isComment ? data.post_id : null,
+      postThumbnailUrl: isComment ? (data.post_thumbnail_url ?? null) : null,
+      postPermalink: isComment ? (data.post_permalink ?? null) : null,
       keyword: data.keyword.trim(),
       message: data.message,
-      publicReply: data.public_reply?.trim() || null,
+      // Resposta pública não existe pra story — só faz sentido em comentário.
+      publicReply: isComment ? data.public_reply?.trim() || null : null,
       funnelId: data.funnel_id ?? null,
     });
   });
 
 export async function createFunnelRule(payload: {
-  post_id: string;
+  trigger_type: "comment" | "story_reply";
+  post_id?: string | null;
   post_thumbnail_url?: string | null;
   post_permalink?: string | null;
   keyword: string;
@@ -194,12 +204,17 @@ const _updateFunnelRule = createServerFn({ method: "POST" })
   .inputValidator(updateRuleSchema)
   .handler(async ({ data }) => {
     const { organizationId } = await requireOrgContext();
+    const existing = await db.query.instagramFunnelRules.findFirst({
+      where: and(eq(instagramFunnelRules.id, data.id), eq(instagramFunnelRules.organizationId, organizationId)),
+    });
+    if (!existing) throw new Error("Regra não encontrada.");
     await db
       .update(instagramFunnelRules)
       .set({
         keyword: data.keyword.trim(),
         message: data.message,
-        publicReply: data.public_reply?.trim() || null,
+        // Resposta pública não existe pra story, mesmo que venha preenchida.
+        publicReply: existing.triggerType === "comment" ? data.public_reply?.trim() || null : null,
         funnelId: data.funnel_id ?? null,
       })
       .where(and(eq(instagramFunnelRules.id, data.id), eq(instagramFunnelRules.organizationId, organizationId)));

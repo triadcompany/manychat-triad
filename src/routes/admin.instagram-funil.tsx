@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Instagram, Plus, Pencil, Trash2, ExternalLink, MessageCircle, Workflow } from "lucide-react";
+import { Instagram, Plus, Pencil, Trash2, ExternalLink, MessageCircle, Workflow, Clapperboard } from "lucide-react";
 import { toast } from "sonner";
 import {
   fetchFunnelRules,
@@ -141,7 +141,11 @@ function RulesTab() {
         <div className="space-y-2">
           {rules.map((r) => (
             <Card key={r.id} className="p-3 flex items-center gap-3">
-              {r.post_thumbnail_url ? (
+              {r.trigger_type === "story_reply" ? (
+                <div className="h-14 w-14 rounded-md bg-muted flex items-center justify-center shrink-0" title="Resposta ao story">
+                  <Clapperboard className="h-5 w-5 text-muted-foreground" />
+                </div>
+              ) : r.post_thumbnail_url ? (
                 <img src={r.post_thumbnail_url} alt="" className="h-14 w-14 rounded-md object-cover shrink-0" />
               ) : (
                 <div className="h-14 w-14 rounded-md bg-muted flex items-center justify-center shrink-0">
@@ -151,6 +155,7 @@ function RulesTab() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" className="font-mono">{r.keyword}</Badge>
+                  {r.trigger_type === "story_reply" && <Badge variant="outline" className="text-muted-foreground">Story</Badge>}
                   {r.public_reply && <Badge variant="outline" className="text-muted-foreground">+ resposta pública</Badge>}
                   {!r.active && <Badge variant="outline" className="text-muted-foreground">Pausada</Badge>}
                   {r.post_permalink && (
@@ -185,6 +190,7 @@ function RulesTab() {
 
 function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
   const queryClient = useQueryClient();
+  const [triggerType, setTriggerType] = useState<"comment" | "story_reply">("comment");
   const [selectedPost, setSelectedPost] = useState<InstagramPostRow | null>(null);
   const [keyword, setKeyword] = useState("");
   const [message, setMessage] = useState("");
@@ -194,15 +200,18 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
   const { data: posts = [], isLoading, isError, error } = useQuery({ queryKey: ["instagram-recent-posts"], queryFn: fetchRecentInstagramPosts });
   const { data: funnels = [] } = useQuery({ queryKey: ["instagram-funnels"], queryFn: fetchFunnels });
 
+  const isComment = triggerType === "comment";
+
   const createMutation = useMutation({
     mutationFn: () =>
       createFunnelRule({
-        post_id: selectedPost!.id,
-        post_thumbnail_url: selectedPost!.thumbnail_url,
-        post_permalink: selectedPost!.permalink,
+        trigger_type: triggerType,
+        post_id: isComment ? selectedPost!.id : null,
+        post_thumbnail_url: isComment ? selectedPost!.thumbnail_url : null,
+        post_permalink: isComment ? selectedPost!.permalink : null,
         keyword: keyword.trim(),
         message: message.trim(),
-        public_reply: publicReply.trim() || null,
+        public_reply: isComment ? publicReply.trim() || null : null,
         funnel_id: funnelId === "none" ? null : funnelId,
       }),
     onSuccess: () => {
@@ -220,58 +229,79 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
       </DialogHeader>
       <div className="space-y-4 py-2">
         <div className="space-y-1.5">
-          <Label>Post</Label>
-          {isLoading ? (
-            <div className="grid grid-cols-4 gap-2">
-              {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="aspect-square rounded-md" />)}
-            </div>
-          ) : isError ? (
-            <p className="text-sm text-destructive">
-              {error instanceof Error ? error.message : "Erro ao buscar posts."} Confira a{" "}
-              <Link to="/admin/configuracoes" className="underline underline-offset-2">conexão do Instagram</Link>.
+          <Label>Gatilho</Label>
+          <Select value={triggerType} onValueChange={(v) => setTriggerType(v as "comment" | "story_reply")}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="comment">Comentário no post</SelectItem>
+              <SelectItem value="story_reply">Resposta ao story</SelectItem>
+            </SelectContent>
+          </Select>
+          {!isComment && (
+            <p className="text-[11px] text-muted-foreground">
+              Dispara em resposta a qualquer story da conta conectada, sem travar num story específico (story expira em 24h).
             </p>
-          ) : posts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhum post encontrado.</p>
-          ) : (
-            <div className="grid grid-cols-4 gap-2 max-h-64 overflow-y-auto">
-              {posts.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setSelectedPost(p)}
-                  className={`aspect-square rounded-md overflow-hidden border-2 transition-colors ${selectedPost?.id === p.id ? "border-primary" : "border-transparent hover:border-border"}`}
-                  title={p.caption ?? undefined}
-                >
-                  {p.thumbnail_url ? (
-                    <img src={p.thumbnail_url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="h-full w-full bg-muted flex items-center justify-center">
-                      <Instagram className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  )}
-                </button>
-              ))}
-            </div>
           )}
         </div>
+        {isComment && (
+          <div className="space-y-1.5">
+            <Label>Post</Label>
+            {isLoading ? (
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="aspect-square rounded-md" />)}
+              </div>
+            ) : isError ? (
+              <p className="text-sm text-destructive">
+                {error instanceof Error ? error.message : "Erro ao buscar posts."} Confira a{" "}
+                <Link to="/admin/configuracoes" className="underline underline-offset-2">conexão do Instagram</Link>.
+              </p>
+            ) : posts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum post encontrado.</p>
+            ) : (
+              <div className="grid grid-cols-4 gap-2 max-h-64 overflow-y-auto">
+                {posts.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedPost(p)}
+                    className={`aspect-square rounded-md overflow-hidden border-2 transition-colors ${selectedPost?.id === p.id ? "border-primary" : "border-transparent hover:border-border"}`}
+                    title={p.caption ?? undefined}
+                  >
+                    {p.thumbnail_url ? (
+                      <img src={p.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="h-full w-full bg-muted flex items-center justify-center">
+                        <Instagram className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label>Palavra-chave</Label>
           <Input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Ex: QUERO" />
-          <p className="text-[11px] text-muted-foreground">Bate se o comentário contiver essa palavra (sem diferenciar maiúsculas).</p>
+          <p className="text-[11px] text-muted-foreground">
+            Bate se {isComment ? "o comentário" : "a resposta ao story"} contiver essa palavra (sem diferenciar maiúsculas).
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label>Mensagem do DM</Label>
           <Textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Oi! Vi que você comentou..." className="min-h-[90px]" />
         </div>
-        <div className="space-y-1.5">
-          <Label>Resposta pública no comentário (opcional)</Label>
-          <Input value={publicReply} onChange={(e) => setPublicReply(e.target.value)} placeholder="Ex: Te mandei no Direct!" />
-          <p className="text-[11px] text-muted-foreground">
-            Responde o comentário publicamente, além do DM. Exige permissão extra no token
-            (<code className="text-[11px] bg-muted px-1 py-0.5 rounded">instagram_business_manage_comments</code>) —
-            deixe em branco se o token atual não tiver essa permissão.
-          </p>
-        </div>
+        {isComment && (
+          <div className="space-y-1.5">
+            <Label>Resposta pública no comentário (opcional)</Label>
+            <Input value={publicReply} onChange={(e) => setPublicReply(e.target.value)} placeholder="Ex: Te mandei no Direct!" />
+            <p className="text-[11px] text-muted-foreground">
+              Responde o comentário publicamente, além do DM. Exige permissão extra no token
+              (<code className="text-[11px] bg-muted px-1 py-0.5 rounded">instagram_business_manage_comments</code>) —
+              deixe em branco se o token atual não tiver essa permissão.
+            </p>
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label>Funil (opcional)</Label>
           <Select value={funnelId} onValueChange={setFunnelId}>
@@ -287,7 +317,7 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
       <DialogFooter>
         <Button
           onClick={() => createMutation.mutate()}
-          disabled={!selectedPost || !keyword.trim() || !message.trim() || createMutation.isPending}
+          disabled={(isComment && !selectedPost) || !keyword.trim() || !message.trim() || createMutation.isPending}
         >
           {createMutation.isPending ? "Criando..." : "Criar regra"}
         </Button>
@@ -331,33 +361,46 @@ function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () =>
         <DialogTitle>Editar regra</DialogTitle>
       </DialogHeader>
       <div className="space-y-4 py-2">
-        <div className="flex items-center gap-3">
-          {rule.post_thumbnail_url ? (
-            <img src={rule.post_thumbnail_url} alt="" className="h-14 w-14 rounded-md object-cover shrink-0" />
-          ) : (
+        {rule.trigger_type === "story_reply" ? (
+          <div className="flex items-center gap-2">
             <div className="h-14 w-14 rounded-md bg-muted flex items-center justify-center shrink-0">
-              <Instagram className="h-5 w-5 text-muted-foreground" />
+              <Clapperboard className="h-5 w-5 text-muted-foreground" />
             </div>
-          )}
-          {rule.post_permalink && (
-            <a href={rule.post_permalink} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
-              Ver post <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-        </div>
+            <p className="text-xs text-muted-foreground">Resposta ao story — qualquer story da conta conectada.</p>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            {rule.post_thumbnail_url ? (
+              <img src={rule.post_thumbnail_url} alt="" className="h-14 w-14 rounded-md object-cover shrink-0" />
+            ) : (
+              <div className="h-14 w-14 rounded-md bg-muted flex items-center justify-center shrink-0">
+                <Instagram className="h-5 w-5 text-muted-foreground" />
+              </div>
+            )}
+            {rule.post_permalink && (
+              <a href={rule.post_permalink} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+                Ver post <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label>Palavra-chave</Label>
           <Input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Ex: QUERO" />
-          <p className="text-[11px] text-muted-foreground">Bate se o comentário contiver essa palavra (sem diferenciar maiúsculas).</p>
+          <p className="text-[11px] text-muted-foreground">
+            Bate se {rule.trigger_type === "story_reply" ? "a resposta ao story" : "o comentário"} contiver essa palavra (sem diferenciar maiúsculas).
+          </p>
         </div>
         <div className="space-y-1.5">
           <Label>Mensagem do DM</Label>
           <Textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Oi! Vi que você comentou..." className="min-h-[90px]" />
         </div>
-        <div className="space-y-1.5">
-          <Label>Resposta pública no comentário (opcional)</Label>
-          <Input value={publicReply} onChange={(e) => setPublicReply(e.target.value)} placeholder="Ex: Te mandei no Direct!" />
-        </div>
+        {rule.trigger_type === "comment" && (
+          <div className="space-y-1.5">
+            <Label>Resposta pública no comentário (opcional)</Label>
+            <Input value={publicReply} onChange={(e) => setPublicReply(e.target.value)} placeholder="Ex: Te mandei no Direct!" />
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label>Funil (opcional)</Label>
           <Select value={funnelId} onValueChange={setFunnelId}>

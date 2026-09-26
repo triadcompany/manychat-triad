@@ -15,6 +15,13 @@
       "when": 1790132906189,
       "tag": "0001_daily_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790382868993,
+      "tag": "0002_robust_blazing_skull",
+      "breakpoints": true
     }
   ]
 }

@@ -91,7 +91,11 @@ export const instagramFunnelRules = pgTable("instagram_funnel_rules", {
   organizationId: uuid("organization_id")
     .notNull()
     .references(() => organizations.id, { onDelete: "cascade" }),
-  postId: text("post_id").notNull(),
+  // "comment" (padrão, trava num post) | "story_reply" (qualquer story da
+  // conta, sem post fixo — story expira em 24h, não faz sentido travar nele).
+  triggerType: text("trigger_type").notNull().default("comment"),
+  // Só preenchido quando triggerType = "comment".
+  postId: text("post_id"),
   postThumbnailUrl: text("post_thumbnail_url"),
   postPermalink: text("post_permalink"),
   keyword: text("keyword").notNull(), // comparação: contém, case-insensitive

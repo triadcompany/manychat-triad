@@ -34,7 +34,15 @@ interface CommentChangeValue {
 interface MessagingEvent {
   sender?: { id?: string };
   recipient?: { id?: string };
-  message?: { text?: string; is_echo?: boolean; quick_reply?: { payload?: string } };
+  message?: {
+    mid?: string;
+    text?: string;
+    is_echo?: boolean;
+    quick_reply?: { payload?: string };
+    // Presente quando a mensagem é resposta a um story (diferente de
+    // reply_to.mid, que é resposta a uma mensagem normal da conversa).
+    reply_to?: { story?: { id?: string; url?: string } };
+  };
 }
 
 interface InstagramWebhookEntry {
@@ -82,6 +90,21 @@ export async function handleInstagramWebhook(body: InstagramWebhookBody): Promis
       // Eco da nossa própria mensagem enviada (sender = a própria conta) —
       // ignora, senão o funil reagiria à mensagem que ele mesmo mandou.
       if (!senderId || !text || event.message?.is_echo || senderId === igBusinessAccountId) continue;
+
+      const storyId = event.message?.reply_to?.story?.id;
+      if (storyId) {
+        // Resposta a story é sempre gatilho novo, nunca continuação de
+        // sessão pausada — mesma separação que já existe entre comentário e
+        // DM comum.
+        const created = await processStoryReply(igBusinessAccountId, {
+          mid: event.message?.mid ?? storyId,
+          text,
+          fromId: senderId,
+        });
+        if (created) leadsCreated++;
+        continue;
+      }
+
       await processIncomingMessage(igBusinessAccountId, senderId, text, event.message?.quick_reply?.payload ?? null);
     }
   }
@@ -150,6 +173,65 @@ async function processComment(
       const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
       if (edge) {
         await advanceFunnel(connection.accessToken, igBusinessAccountId, comment.fromId, rule.funnelId, inserted.id, edge.targetNodeId);
+      }
+    }
+  }
+
+  return !!inserted;
+}
+
+// Espelha processComment, mas pra resposta de story: sem post fixo (story
+// expira em 24h) — casa por palavra-chave contra qualquer regra
+// trigger_type='story_reply' da organização.
+async function processStoryReply(
+  igBusinessAccountId: string,
+  reply: { mid: string; text: string; fromId: string }
+): Promise<boolean> {
+  const connection = await db.query.instagramConnections.findFirst({
+    where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
+  });
+  if (!connection?.active) return false;
+
+  const rules = await db.query.instagramFunnelRules.findMany({
+    where: and(eq(instagramFunnelRules.organizationId, connection.organizationId), eq(instagramFunnelRules.triggerType, "story_reply")),
+  });
+  const textLower = reply.text.toLowerCase();
+  const rule = rules.find((r) => r.active && textLower.includes(r.keyword.toLowerCase()));
+  if (!rule) return false;
+
+  let status: "sent" | "failed" = "sent";
+  let errorMessage: string | null = null;
+  try {
+    await sendDirectMessage(connection.accessToken, igBusinessAccountId, reply.fromId, rule.message);
+  } catch (err) {
+    status = "failed";
+    errorMessage = err instanceof Error ? err.message : String(err);
+  }
+
+  // Reaproveita comment_id pra guardar o mid da mensagem — mesma proteção de
+  // dedup contra a Meta reentregar o mesmo evento.
+  const [inserted] = await db
+    .insert(instagramFunnelLeads)
+    .values({
+      ruleId: rule.id,
+      commentId: reply.mid,
+      igUsername: null,
+      igUserId: reply.fromId,
+      commentText: reply.text.slice(0, 500),
+      status,
+      errorMessage,
+    })
+    .onConflictDoNothing({ target: [instagramFunnelLeads.ruleId, instagramFunnelLeads.commentId] })
+    .returning({ id: instagramFunnelLeads.id });
+
+  if (inserted && rule.funnelId) {
+    const trigger = await db.query.instagramFunnelNodes.findFirst({
+      where: and(eq(instagramFunnelNodes.funnelId, rule.funnelId), eq(instagramFunnelNodes.type, "trigger")),
+    });
+    if (trigger) {
+      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
+      if (edge) {
+        await advanceFunnel(connection.accessToken, igBusinessAccountId, reply.fromId, rule.funnelId, inserted.id, edge.targetNodeId);
       }
     }
   }
