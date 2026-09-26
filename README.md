@@ -83,7 +83,7 @@ Ainda falta:
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
 5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Contatos e Caixa de Entrada hoje são só placeholder "Em breve", sem funcionalidade real ainda.
-6. **Automation mais rico** — bloco Botões (quick replies) já implementado (ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`); construtor em formato de assistente (wizard, mais simples que o editor visual atual), Insights/analytics por automação, Smart Delay, Ir para outro funil e Tags seguem no roadmap.
+6. **Automation mais rico** — bloco Botões (quick replies) já implementado (ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`); Insights/analytics por automação, Smart Delay, Ir para outro funil e Tags seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
 
 ## Referência rápida da API do Instagram usada
 
