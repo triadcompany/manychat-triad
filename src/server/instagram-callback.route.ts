@@ -6,7 +6,6 @@ import {
   OAUTH_STATE_COOKIE,
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
-  fetchInstagramAccountId,
   getSessionOrganizationId,
 } from "./instagram-oauth";
 
@@ -33,9 +32,8 @@ export default defineHandler(async (event) => {
   if (!organizationId) return redirect("/login");
 
   try {
-    const { accessToken: shortLivedToken } = await exchangeCodeForShortLivedToken(code);
+    const { accessToken: shortLivedToken, userId: instagramBusinessAccountId } = await exchangeCodeForShortLivedToken(code);
     const { accessToken, expiresInSeconds } = await exchangeForLongLivedToken(shortLivedToken);
-    const instagramBusinessAccountId = await fetchInstagramAccountId(accessToken);
     const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
     const existing = await db.query.instagramConnections.findFirst({

@@ -9,8 +9,6 @@ import { handleInstagramWebhook, type InstagramWebhookBody } from "./instagram-w
 //   Corpo assinado com HMAC-SHA256 do App Secret (header
 //   x-hub-signature-256) — validado antes de processar qualquer coisa.
 export default defineHandler(async (event) => {
-  console.log(`[instagram-webhook] recebido ${event.req.method}`);
-
   if (event.req.method === "GET") {
     const url = new URL(event.req.url);
     const mode = url.searchParams.get("hub.mode");
@@ -24,10 +22,7 @@ export default defineHandler(async (event) => {
   }
 
   const rawBody = await event.req.text();
-  console.log(`[instagram-webhook] body (${rawBody.length} bytes): ${rawBody.slice(0, 1000)}`);
-
   const signatureValid = verifySignature(rawBody, event.req.headers.get("x-hub-signature-256"));
-  console.log(`[instagram-webhook] assinatura válida: ${signatureValid}`);
   if (!signatureValid) {
     return new Response(JSON.stringify({ error: "assinatura inválida" }), {
       status: 401,
@@ -47,7 +42,6 @@ export default defineHandler(async (event) => {
 
   try {
     const result = await handleInstagramWebhook(body as InstagramWebhookBody);
-    console.log("[instagram-webhook] resultado:", JSON.stringify(result));
     return result;
   } catch (err) {
     // 200 mesmo em erro interno: evita que a Meta reenvie indefinidamente por
@@ -63,16 +57,8 @@ export default defineHandler(async (event) => {
 
 function verifySignature(rawBody: string, header: string | null): boolean {
   const appSecret = process.env.INSTAGRAM_APP_SECRET;
-  if (!appSecret) {
-    console.log("[instagram-webhook] INSTAGRAM_APP_SECRET não configurada");
-    return false;
-  }
-  if (!header) {
-    console.log("[instagram-webhook] sem header x-hub-signature-256 no request");
-    return false;
-  }
+  if (!appSecret || !header) return false;
   const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody).digest("hex");
-  console.log(`[instagram-webhook] assinatura recebida: ${header} | esperada: ${expected}`);
   const a = Buffer.from(expected);
   const b = Buffer.from(header);
   if (a.length !== b.length) return false;

@@ -65,7 +65,13 @@ async function parseJsonOrThrow<T>(res: Response, action: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function exchangeCodeForShortLivedToken(code: string): Promise<{ accessToken: string }> {
+// O user_id devolvido aqui é o ID de conta do Instagram no formato clássico
+// (ex: "178414...") — o mesmo que aparece em entry[].id nos webhooks. Uma
+// chamada separada pra graph.instagram.com/me?fields=id (testada e removida)
+// devolve um ID *diferente*, de outro formato, que nunca bate com o que os
+// webhooks reportam — por isso usamos o user_id da própria troca de token,
+// não uma chamada extra.
+export async function exchangeCodeForShortLivedToken(code: string): Promise<{ accessToken: string; userId: string }> {
   const body = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),
@@ -74,8 +80,8 @@ export async function exchangeCodeForShortLivedToken(code: string): Promise<{ ac
     code,
   });
   const res = await fetch(TOKEN_URL, { method: "POST", body });
-  const json = await parseJsonOrThrow<{ access_token: string }>(res, "trocar code por token");
-  return { accessToken: json.access_token };
+  const json = await parseJsonOrThrow<{ access_token: string; user_id: string | number }>(res, "trocar code por token");
+  return { accessToken: json.access_token, userId: String(json.user_id) };
 }
 
 export async function exchangeForLongLivedToken(shortLivedToken: string): Promise<{ accessToken: string; expiresInSeconds: number }> {
@@ -87,13 +93,6 @@ export async function exchangeForLongLivedToken(shortLivedToken: string): Promis
   const res = await fetch(`${GRAPH_URL}/access_token?${params}`);
   const json = await parseJsonOrThrow<{ access_token: string; expires_in: number }>(res, "trocar por token de longa duração");
   return { accessToken: json.access_token, expiresInSeconds: json.expires_in };
-}
-
-export async function fetchInstagramAccountId(accessToken: string): Promise<string> {
-  const params = new URLSearchParams({ fields: "id", access_token: accessToken });
-  const res = await fetch(`${GRAPH_URL}/me?${params}`);
-  const json = await parseJsonOrThrow<{ id: string }>(res, "buscar a conta do Instagram");
-  return json.id;
 }
 
 export async function refreshLongLivedToken(currentToken: string): Promise<{ accessToken: string; expiresInSeconds: number }> {
