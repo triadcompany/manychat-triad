@@ -26,7 +26,8 @@ Recuperação de senha ainda é manual: `npm run reset-password -- email nova-se
 Se já tinha um banco de antes, rode `npm run db:migrate` de novo pra pegar
 as migrações que faltam: `drizzle/0001_daily_venus.sql` (bloco Botões, Fase
 4), `drizzle/0002_robust_blazing_skull.sql` (gatilho Resposta ao story,
-Fase 6) e `drizzle/0003_typical_kid_colt.sql` (Caixa de Entrada, Fase 7).
+Fase 6), `drizzle/0003_typical_kid_colt.sql` (Caixa de Entrada, Fase 7) e
+`drizzle/0004_chubby_thunderbolt_ross.sql` (Contatos/tags, Fase 8).
 
 ## Estrutura
 
@@ -42,6 +43,7 @@ src/
     instagram-callback.route.ts  # GET /api/instagram/callback — troca o code, salva a conexão
     instagram-refresh-tokens.route.ts  # GET /api/instagram/refresh-tokens — renovação via cron externo
     instagram-messages.ts      # Caixa de Entrada — loga mensagens, lista conversas/histórico, responde manualmente
+    instagram-contacts.ts      # Contatos — lista unificada, tags coloridas (CRUD + atribuição), filtro por tag
     session.ts                 # auth (JWT em cookie) — login, signup (self-service), sessão
     settings.ts                 # chave da OpenAI por organização (app_config)
   lib/
@@ -51,7 +53,7 @@ src/
     __root.tsx                            # shell HTML, providers, guard de sessão
     login.tsx / cadastro.tsx / index.tsx  # login, cadastro self-service, redirect pra /admin/inicio
     admin.inicio.tsx                      # saudação + status da conexão + atalhos
-    admin.contatos.tsx                    # placeholder "Em breve"
+    admin.contatos.tsx                    # lista de contatos, tags coloridas e origem do lead
     admin.caixa-entrada.tsx               # inbox de Direct — lista de conversas + thread + resposta manual
     admin.instagram-conexao.tsx           # redirect puro pra /admin/configuracoes (rota antiga)
     admin.instagram-funil.tsx             # abas Regras / Funis / Leads ("Automação" na navegação)
@@ -73,7 +75,7 @@ docs/           # specs de design (funil, funil visual, scaffolding SaaS, auth s
 
 ### Tabelas em `schema.ts`
 
-`organizations`, `users`, `profiles`, `app_config` (config por organização — hoje só a chave da OpenAI), `instagram_connections`, `instagram_funnel_rules`, `instagram_funnel_leads`, `instagram_funnels`, `instagram_funnel_nodes`, `instagram_funnel_edges`, `instagram_funnel_sessions`, `instagram_conversations`, `instagram_messages`.
+`organizations`, `users`, `profiles`, `app_config` (config por organização — hoje só a chave da OpenAI), `instagram_connections`, `instagram_funnel_rules`, `instagram_funnel_leads`, `instagram_funnels`, `instagram_funnel_nodes`, `instagram_funnel_edges`, `instagram_funnel_sessions`, `instagram_conversations`, `instagram_messages`, `instagram_tags`, `instagram_contact_tags`.
 
 ## O que falta pra virar SaaS de verdade
 
@@ -85,8 +87,8 @@ Ainda falta:
 2. **Cron de renovação de token**: o endpoint `/api/instagram/refresh-tokens` existe, mas o agendamento em si (workflow n8n batendo nele 1x/dia) ainda precisa ser configurado.
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
-5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Caixa de Entrada já é real — histórico de Direct + resposta manual que pausa a automação (ver `docs/2026-09-25-caixa-de-entrada-design.md`). Contatos segue como placeholder "Em breve".
-6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`) e gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) já implementados; Insights/analytics por automação, Smart Delay, Ir para outro funil e Tags seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
+5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Caixa de Entrada (histórico de Direct + resposta manual que pausa a automação, ver `docs/2026-09-25-caixa-de-entrada-design.md`) e Contatos (lista unificada, tags coloridas, origem do lead, ver `docs/2026-09-25-contatos-design.md`) já são reais.
+6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`) e gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) já implementados; Insights/analytics por automação, Smart Delay e Ir para outro funil seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
 
 ## Referência rápida da API do Instagram usada
 
