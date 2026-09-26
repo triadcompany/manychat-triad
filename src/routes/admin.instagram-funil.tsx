@@ -68,7 +68,7 @@ function InstagramFunilPage() {
         </div>
         <p className="text-sm text-muted-foreground">
           Comentário com a palavra-chave num post dispara uma resposta privada automática no Direct.{" "}
-          <Link to="/admin/instagram-conexao" className="underline underline-offset-2 hover:text-foreground">
+          <Link to="/admin/configuracoes" className="underline underline-offset-2 hover:text-foreground">
             Conexão do Instagram
           </Link>
           .
@@ -228,7 +228,7 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
           ) : isError ? (
             <p className="text-sm text-destructive">
               {error instanceof Error ? error.message : "Erro ao buscar posts."} Confira a{" "}
-              <Link to="/admin/instagram-conexao" className="underline underline-offset-2">conexão do Instagram</Link>.
+              <Link to="/admin/configuracoes" className="underline underline-offset-2">conexão do Instagram</Link>.
             </p>
           ) : posts.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhum post encontrado.</p>

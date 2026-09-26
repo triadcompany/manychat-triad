@@ -9,7 +9,9 @@ import {
   getSessionOrganizationId,
 } from "./instagram-oauth";
 
-const BACK_TO_CONEXAO = "/admin/instagram-conexao";
+// A conexão do Instagram vive na aba "Conexão Instagram" dentro de
+// Configurações (ver docs/2026-09-25-navegacao-lateral-manychat-design.md).
+const BACK_TO_CONEXAO = "/admin/configuracoes";
 
 export default defineHandler(async (event) => {
   const url = new URL(event.req.url);

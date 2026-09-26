@@ -13,7 +13,10 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as CadastroRouteImport } from './routes/cadastro'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PrivacidadeRouteImport } from './routes/privacidade'
+import { Route as AdminCaixaEntradaRouteImport } from './routes/admin.caixa-entrada'
 import { Route as AdminConfiguracoesRouteImport } from './routes/admin.configuracoes'
+import { Route as AdminContatosRouteImport } from './routes/admin.contatos'
+import { Route as AdminInicioRouteImport } from './routes/admin.inicio'
 import { Route as AdminInstagramConexaoRouteImport } from './routes/admin.instagram-conexao'
 import { Route as AdminInstagramFunilRouteImport } from './routes/admin.instagram-funil'
 import { Route as AdminInstagramFunilEditorFunnelIdRouteImport } from './routes/admin.instagram-funil-editor.$funnelId'
@@ -38,9 +41,24 @@ const PrivacidadeRoute = PrivacidadeRouteImport.update({
   path: '/privacidade',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminCaixaEntradaRoute = AdminCaixaEntradaRouteImport.update({
+  id: '/admin/caixa-entrada',
+  path: '/admin/caixa-entrada',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminConfiguracoesRoute = AdminConfiguracoesRouteImport.update({
   id: '/admin/configuracoes',
   path: '/admin/configuracoes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminContatosRoute = AdminContatosRouteImport.update({
+  id: '/admin/contatos',
+  path: '/admin/contatos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminInicioRoute = AdminInicioRouteImport.update({
+  id: '/admin/inicio',
+  path: '/admin/inicio',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminInstagramConexaoRoute = AdminInstagramConexaoRouteImport.update({
@@ -65,7 +83,10 @@ export interface FileRoutesByFullPath {
   '/cadastro': typeof CadastroRoute
   '/login': typeof LoginRoute
   '/privacidade': typeof PrivacidadeRoute
+  '/admin/caixa-entrada': typeof AdminCaixaEntradaRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
+  '/admin/contatos': typeof AdminContatosRoute
+  '/admin/inicio': typeof AdminInicioRoute
   '/admin/instagram-conexao': typeof AdminInstagramConexaoRoute
   '/admin/instagram-funil': typeof AdminInstagramFunilRoute
   '/admin/instagram-funil-editor/$funnelId': typeof AdminInstagramFunilEditorFunnelIdRoute
@@ -75,7 +96,10 @@ export interface FileRoutesByTo {
   '/cadastro': typeof CadastroRoute
   '/login': typeof LoginRoute
   '/privacidade': typeof PrivacidadeRoute
+  '/admin/caixa-entrada': typeof AdminCaixaEntradaRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
+  '/admin/contatos': typeof AdminContatosRoute
+  '/admin/inicio': typeof AdminInicioRoute
   '/admin/instagram-conexao': typeof AdminInstagramConexaoRoute
   '/admin/instagram-funil': typeof AdminInstagramFunilRoute
   '/admin/instagram-funil-editor/$funnelId': typeof AdminInstagramFunilEditorFunnelIdRoute
@@ -86,7 +110,10 @@ export interface FileRoutesById {
   '/cadastro': typeof CadastroRoute
   '/login': typeof LoginRoute
   '/privacidade': typeof PrivacidadeRoute
+  '/admin/caixa-entrada': typeof AdminCaixaEntradaRoute
   '/admin/configuracoes': typeof AdminConfiguracoesRoute
+  '/admin/contatos': typeof AdminContatosRoute
+  '/admin/inicio': typeof AdminInicioRoute
   '/admin/instagram-conexao': typeof AdminInstagramConexaoRoute
   '/admin/instagram-funil': typeof AdminInstagramFunilRoute
   '/admin/instagram-funil-editor/$funnelId': typeof AdminInstagramFunilEditorFunnelIdRoute
@@ -98,7 +125,10 @@ export interface FileRouteTypes {
     | '/cadastro'
     | '/login'
     | '/privacidade'
+    | '/admin/caixa-entrada'
     | '/admin/configuracoes'
+    | '/admin/contatos'
+    | '/admin/inicio'
     | '/admin/instagram-conexao'
     | '/admin/instagram-funil'
     | '/admin/instagram-funil-editor/$funnelId'
@@ -108,7 +138,10 @@ export interface FileRouteTypes {
     | '/cadastro'
     | '/login'
     | '/privacidade'
+    | '/admin/caixa-entrada'
     | '/admin/configuracoes'
+    | '/admin/contatos'
+    | '/admin/inicio'
     | '/admin/instagram-conexao'
     | '/admin/instagram-funil'
     | '/admin/instagram-funil-editor/$funnelId'
@@ -118,7 +151,10 @@ export interface FileRouteTypes {
     | '/cadastro'
     | '/login'
     | '/privacidade'
+    | '/admin/caixa-entrada'
     | '/admin/configuracoes'
+    | '/admin/contatos'
+    | '/admin/inicio'
     | '/admin/instagram-conexao'
     | '/admin/instagram-funil'
     | '/admin/instagram-funil-editor/$funnelId'
@@ -129,7 +165,10 @@ export interface RootRouteChildren {
   CadastroRoute: typeof CadastroRoute
   LoginRoute: typeof LoginRoute
   PrivacidadeRoute: typeof PrivacidadeRoute
+  AdminCaixaEntradaRoute: typeof AdminCaixaEntradaRoute
   AdminConfiguracoesRoute: typeof AdminConfiguracoesRoute
+  AdminContatosRoute: typeof AdminContatosRoute
+  AdminInicioRoute: typeof AdminInicioRoute
   AdminInstagramConexaoRoute: typeof AdminInstagramConexaoRoute
   AdminInstagramFunilRoute: typeof AdminInstagramFunilRoute
   AdminInstagramFunilEditorFunnelIdRoute: typeof AdminInstagramFunilEditorFunnelIdRoute
@@ -165,11 +204,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrivacidadeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/caixa-entrada': {
+      id: '/admin/caixa-entrada'
+      path: '/admin/caixa-entrada'
+      fullPath: '/admin/caixa-entrada'
+      preLoaderRoute: typeof AdminCaixaEntradaRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/configuracoes': {
       id: '/admin/configuracoes'
       path: '/admin/configuracoes'
       fullPath: '/admin/configuracoes'
       preLoaderRoute: typeof AdminConfiguracoesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/contatos': {
+      id: '/admin/contatos'
+      path: '/admin/contatos'
+      fullPath: '/admin/contatos'
+      preLoaderRoute: typeof AdminContatosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/inicio': {
+      id: '/admin/inicio'
+      path: '/admin/inicio'
+      fullPath: '/admin/inicio'
+      preLoaderRoute: typeof AdminInicioRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/instagram-conexao': {
@@ -201,7 +261,10 @@ const rootRouteChildren: RootRouteChildren = {
   CadastroRoute: CadastroRoute,
   LoginRoute: LoginRoute,
   PrivacidadeRoute: PrivacidadeRoute,
+  AdminCaixaEntradaRoute: AdminCaixaEntradaRoute,
   AdminConfiguracoesRoute: AdminConfiguracoesRoute,
+  AdminContatosRoute: AdminContatosRoute,
+  AdminInicioRoute: AdminInicioRoute,
   AdminInstagramConexaoRoute: AdminInstagramConexaoRoute,
   AdminInstagramFunilRoute: AdminInstagramFunilRoute,
   AdminInstagramFunilEditorFunnelIdRoute:
