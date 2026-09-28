@@ -196,6 +196,7 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
   const [message, setMessage] = useState("");
   const [publicReply, setPublicReply] = useState("");
   const [funnelId, setFunnelId] = useState<string>("none");
+  const [requireFollow, setRequireFollow] = useState(false);
 
   const { data: posts = [], isLoading, isError, error } = useQuery({ queryKey: ["instagram-recent-posts"], queryFn: fetchRecentInstagramPosts });
   const { data: funnels = [] } = useQuery({ queryKey: ["instagram-funnels"], queryFn: fetchFunnels });
@@ -213,6 +214,7 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
         message: message.trim(),
         public_reply: isComment ? publicReply.trim() || null : null,
         funnel_id: funnelId === "none" ? null : funnelId,
+        require_follow: requireFollow,
       }),
     onSuccess: () => {
       toast.success("Regra criada.");
@@ -313,6 +315,15 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
           </Select>
           <p className="text-[11px] text-muted-foreground">Continua a conversa no Direct depois dessa 1ª mensagem.</p>
         </div>
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+          <div className="space-y-0.5">
+            <Label>Exigir seguir antes de responder</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Se a pessoa não seguir a conta, manda um aviso pedindo pra seguir em vez da mensagem acima.
+            </p>
+          </div>
+          <Switch checked={requireFollow} onCheckedChange={setRequireFollow} />
+        </div>
       </div>
       <DialogFooter>
         <Button
@@ -335,6 +346,7 @@ function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () =>
   const [message, setMessage] = useState(rule.message);
   const [publicReply, setPublicReply] = useState(rule.public_reply ?? "");
   const [funnelId, setFunnelId] = useState<string>(rule.funnel_id ?? "none");
+  const [requireFollow, setRequireFollow] = useState(rule.require_follow);
 
   const { data: funnels = [] } = useQuery({ queryKey: ["instagram-funnels"], queryFn: fetchFunnels });
 
@@ -346,6 +358,7 @@ function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () =>
         message: message.trim(),
         public_reply: publicReply.trim() || null,
         funnel_id: funnelId === "none" ? null : funnelId,
+        require_follow: requireFollow,
       }),
     onSuccess: () => {
       toast.success("Regra atualizada.");
@@ -410,6 +423,15 @@ function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () =>
               {funnels.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
             </SelectContent>
           </Select>
+        </div>
+        <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+          <div className="space-y-0.5">
+            <Label>Exigir seguir antes de responder</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Se a pessoa não seguir a conta, manda um aviso pedindo pra seguir em vez da mensagem acima.
+            </p>
+          </div>
+          <Switch checked={requireFollow} onCheckedChange={setRequireFollow} />
         </div>
       </div>
       <DialogFooter>

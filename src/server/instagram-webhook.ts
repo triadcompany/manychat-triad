@@ -5,6 +5,7 @@ import {
   appConfig,
   instagramConnections,
   instagramConversations,
+  instagramFollowGates,
   instagramFunnelLeads,
   instagramFunnelRules,
   instagramFunnels,
@@ -45,6 +46,10 @@ interface MessagingEvent {
     // reply_to.mid, que é resposta a uma mensagem normal da conversa).
     reply_to?: { story?: { id?: string; url?: string } };
   };
+  // Clique num botão postback (ex: "Já segui" do gate de seguir) — chega
+  // num campo separado de `message`, mutuamente exclusivos. Exige o app
+  // inscrito no webhook messaging_postbacks (além de messages).
+  postback?: { title?: string; mid?: string; payload?: string };
 }
 
 interface InstagramWebhookEntry {
@@ -88,10 +93,17 @@ export async function handleInstagramWebhook(body: InstagramWebhookBody): Promis
 
     for (const event of entry.messaging ?? []) {
       const senderId = event.sender?.id;
-      const text = event.message?.text;
       // Eco da nossa própria mensagem enviada (sender = a própria conta) —
       // ignora, senão o funil reagiria à mensagem que ele mesmo mandou.
-      if (!senderId || !text || event.message?.is_echo || senderId === igBusinessAccountId) continue;
+      if (!senderId || senderId === igBusinessAccountId) continue;
+
+      if (event.postback?.payload) {
+        await processPostback(igBusinessAccountId, senderId, event.postback.payload);
+        continue;
+      }
+
+      const text = event.message?.text;
+      if (!text || event.message?.is_echo) continue;
 
       const storyId = event.message?.reply_to?.story?.id;
 
@@ -156,6 +168,16 @@ async function processComment(
   const rule = rules.find((r) => r.active && textLower.includes(r.keyword.toLowerCase()));
   if (!rule) return false;
 
+  if (rule.requireFollow && !(await fetchIsUserFollowing(connection.accessToken, comment.fromId))) {
+    return await startFollowGate(connection, igBusinessAccountId, {
+      ruleId: rule.id,
+      commentId: comment.commentId,
+      igUserId: comment.fromId,
+      igUsername: comment.fromUsername,
+      commentText: comment.text,
+    });
+  }
+
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
   try {
@@ -197,16 +219,8 @@ async function processComment(
 
   // Sem inserted = webhook reentregue pro mesmo comentário (já processado
   // antes) — não entra no funil de novo, senão duplicaria as mensagens.
-  if (inserted && rule.funnelId) {
-    const trigger = await db.query.instagramFunnelNodes.findFirst({
-      where: and(eq(instagramFunnelNodes.funnelId, rule.funnelId), eq(instagramFunnelNodes.type, "trigger")),
-    });
-    if (trigger) {
-      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
-      if (edge) {
-        await advanceFunnel(connection.accessToken, igBusinessAccountId, comment.fromId, rule.funnelId, inserted.id, edge.targetNodeId);
-      }
-    }
+  if (inserted) {
+    await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, comment.fromId, inserted.id);
   }
 
   return !!inserted;
@@ -230,6 +244,16 @@ async function processStoryReply(
   const textLower = reply.text.toLowerCase();
   const rule = rules.find((r) => r.active && textLower.includes(r.keyword.toLowerCase()));
   if (!rule) return false;
+
+  if (rule.requireFollow && !(await fetchIsUserFollowing(connection.accessToken, reply.fromId))) {
+    return await startFollowGate(connection, igBusinessAccountId, {
+      ruleId: rule.id,
+      commentId: reply.mid,
+      igUserId: reply.fromId,
+      igUsername: null,
+      commentText: reply.text,
+    });
+  }
 
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
@@ -260,19 +284,143 @@ async function processStoryReply(
     .onConflictDoNothing({ target: [instagramFunnelLeads.ruleId, instagramFunnelLeads.commentId] })
     .returning({ id: instagramFunnelLeads.id });
 
-  if (inserted && rule.funnelId) {
-    const trigger = await db.query.instagramFunnelNodes.findFirst({
-      where: and(eq(instagramFunnelNodes.funnelId, rule.funnelId), eq(instagramFunnelNodes.type, "trigger")),
-    });
-    if (trigger) {
-      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
-      if (edge) {
-        await advanceFunnel(connection.accessToken, igBusinessAccountId, reply.fromId, rule.funnelId, inserted.id, edge.targetNodeId);
-      }
-    }
+  if (inserted) {
+    await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, reply.fromId, inserted.id);
   }
 
   return !!inserted;
+}
+
+// Compartilhado por processComment, processStoryReply e resolveFollowGate —
+// entra no funil visual da regra (se tiver um) a partir do nó de gatilho.
+async function enterFunnelIfConfigured(
+  rule: { funnelId: string | null },
+  connection: { accessToken: string; organizationId: string },
+  igBusinessAccountId: string,
+  igUserId: string,
+  leadId: string
+): Promise<void> {
+  if (!rule.funnelId) return;
+  const trigger = await db.query.instagramFunnelNodes.findFirst({
+    where: and(eq(instagramFunnelNodes.funnelId, rule.funnelId), eq(instagramFunnelNodes.type, "trigger")),
+  });
+  if (!trigger) return;
+  const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
+  if (!edge) return;
+  await advanceFunnel(connection.accessToken, igBusinessAccountId, igUserId, rule.funnelId, leadId, edge.targetNodeId);
+}
+
+// Fase 9 — gate "seguir antes de responder". Payload fixo do botão "Já
+// segui" (postback, chega via webhook messaging_postbacks).
+const GATE_CONFIRM_PAYLOAD = "gate:confirm_follow";
+const GATE_TEXT_FIRST =
+  'Falta só um passo: me segue aqui no perfil 👀\n\nAssim que seguir, clica em "Já segui" que eu libero sua mensagem na hora 👇';
+const GATE_TEXT_RETRY = "Ainda não te encontrei seguindo 👀 segue rapidinho que eu libero na hora!";
+
+// Registra o lead como "aguardando seguir" (mesma proteção de dedupe por
+// ruleId+commentId de sempre — reentrega do mesmo webhook não reenvia o
+// aviso), grava o gate pendente e manda o aviso. Retorna se criou lead novo
+// (mesmo contrato de processComment/processStoryReply pro contador de leads).
+async function startFollowGate(
+  connection: { accessToken: string; organizationId: string },
+  igBusinessAccountId: string,
+  params: { ruleId: string; commentId: string; igUserId: string; igUsername: string | null; commentText: string }
+): Promise<boolean> {
+  const [inserted] = await db
+    .insert(instagramFunnelLeads)
+    .values({
+      ruleId: params.ruleId,
+      commentId: params.commentId,
+      igUsername: params.igUsername,
+      igUserId: params.igUserId,
+      commentText: params.commentText.slice(0, 500),
+      status: "pending_follow",
+      errorMessage: null,
+    })
+    .onConflictDoNothing({ target: [instagramFunnelLeads.ruleId, instagramFunnelLeads.commentId] })
+    .returning({ id: instagramFunnelLeads.id });
+  if (!inserted) return false;
+
+  await db
+    .insert(instagramFollowGates)
+    .values({ organizationId: connection.organizationId, igUserId: params.igUserId, leadId: inserted.id })
+    .onConflictDoUpdate({
+      target: [instagramFollowGates.organizationId, instagramFollowGates.igUserId],
+      set: { leadId: inserted.id },
+    });
+
+  try {
+    await sendFollowGateMessage(connection.accessToken, igBusinessAccountId, params.igUserId, "first");
+  } catch (err) {
+    console.error("[instagram-webhook] falha ao enviar aviso de seguir:", err);
+  }
+
+  return true;
+}
+
+async function processPostback(igBusinessAccountId: string, senderId: string, payload: string): Promise<void> {
+  if (payload === GATE_CONFIRM_PAYLOAD) {
+    await resolveFollowGate(igBusinessAccountId, senderId);
+  }
+}
+
+// Clique em "Já segui" — reconsulta se a pessoa segue de verdade. Segue:
+// apaga o gate, manda a mensagem original da regra (agora por DM comum, não
+// mais resposta privada ao comentário — já existe uma conversa aberta desde
+// o aviso) e entra no funil se a regra tiver um. Ainda não segue: reenvia o
+// aviso (variante de repetição), sem limite de tentativas.
+async function resolveFollowGate(igBusinessAccountId: string, igUserId: string): Promise<void> {
+  const connection = await db.query.instagramConnections.findFirst({
+    where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
+  });
+  if (!connection?.active) return;
+
+  const gate = await db.query.instagramFollowGates.findFirst({
+    where: and(eq(instagramFollowGates.organizationId, connection.organizationId), eq(instagramFollowGates.igUserId, igUserId)),
+  });
+  if (!gate) return; // clique órfão ou repetido depois de já resolvido
+
+  const following = await fetchIsUserFollowing(connection.accessToken, igUserId);
+  if (!following) {
+    try {
+      await sendFollowGateMessage(connection.accessToken, igBusinessAccountId, igUserId, "retry");
+    } catch (err) {
+      console.error("[instagram-webhook] falha ao reenviar aviso de seguir:", err);
+    }
+    return;
+  }
+
+  await db.delete(instagramFollowGates).where(eq(instagramFollowGates.id, gate.id));
+
+  const lead = await db.query.instagramFunnelLeads.findFirst({ where: eq(instagramFunnelLeads.id, gate.leadId) });
+  if (!lead) return;
+  const rule = await db.query.instagramFunnelRules.findFirst({ where: eq(instagramFunnelRules.id, lead.ruleId) });
+  if (!rule) return;
+
+  let status: "sent" | "failed" = "sent";
+  let errorMessage: string | null = null;
+  try {
+    await sendDirectMessage(connection.accessToken, igBusinessAccountId, igUserId, rule.message);
+    await logMessage(connection.organizationId, igUserId, "out", rule.message, lead.igUsername, {
+      type: rule.triggerType === "story_reply" ? "story_reply" : "comment",
+      detail: rule.keyword,
+    });
+  } catch (err) {
+    status = "failed";
+    errorMessage = err instanceof Error ? err.message : String(err);
+  }
+
+  if (rule.triggerType === "comment" && rule.publicReply) {
+    try {
+      await replyToCommentPublicly(connection.accessToken, lead.commentId, rule.publicReply);
+    } catch (err) {
+      console.error("[instagram-webhook] falha ao responder comentário publicamente:", err);
+    }
+  }
+
+  await db.update(instagramFunnelLeads).set({ status, errorMessage }).where(eq(instagramFunnelLeads.id, lead.id));
+
+  await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, igUserId, lead.id);
 }
 
 async function processIncomingMessage(
@@ -491,6 +639,60 @@ async function sendDirectMessageWithQuickReplies(
   }
 }
 
+interface TemplateButton {
+  type: "web_url" | "postback";
+  title: string;
+  url?: string;
+  payload?: string;
+}
+
+// Limites documentados da Meta pro button template: até 3 botões, texto até
+// 640 caracteres.
+async function sendButtonTemplate(
+  accessToken: string,
+  igBusinessAccountId: string,
+  igUserId: string,
+  text: string,
+  buttons: TemplateButton[]
+): Promise<void> {
+  const url = `${BASE_URL}/${igBusinessAccountId}/messages?access_token=${encodeURIComponent(accessToken)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { id: igUserId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: { template_type: "button", text: text.slice(0, 640), buttons: buttons.slice(0, 3) },
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Meta retornou ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
+// Monta e manda o aviso do gate de seguir — "Ver perfil" (só se conseguir
+// descobrir o @ da própria conta conectada) + "Já segui" (postback).
+async function sendFollowGateMessage(
+  accessToken: string,
+  igBusinessAccountId: string,
+  igUserId: string,
+  variant: "first" | "retry"
+): Promise<void> {
+  const ownUsername = await fetchInstagramUsername(accessToken, igBusinessAccountId);
+  const buttons: TemplateButton[] = [];
+  if (ownUsername) {
+    buttons.push({ type: "web_url", title: "Ver perfil 👀", url: `https://www.instagram.com/${ownUsername}` });
+  }
+  buttons.push({ type: "postback", title: "Já segui 💙", payload: GATE_CONFIRM_PAYLOAD });
+
+  await sendButtonTemplate(accessToken, igBusinessAccountId, igUserId, variant === "first" ? GATE_TEXT_FIRST : GATE_TEXT_RETRY, buttons);
+}
+
 async function sendFileMessage(accessToken: string, igBusinessAccountId: string, igUserId: string, fileUrl: string): Promise<void> {
   const url = `${BASE_URL}/${igBusinessAccountId}/messages?access_token=${encodeURIComponent(accessToken)}`;
   const res = await fetch(url, {
@@ -517,6 +719,21 @@ async function fetchInstagramUsername(accessToken: string, igUserId: string): Pr
     return data.username ?? null;
   } catch {
     return null;
+  }
+}
+
+// Checa se a pessoa segue a conta conectada — best-effort: qualquer falha
+// (rede, permissão, janela de retenção expirada) conta como "não segue"
+// (fail-closed: prefere pedir de novo a vazar a mensagem indevidamente).
+async function fetchIsUserFollowing(accessToken: string, igUserId: string): Promise<boolean> {
+  try {
+    const url = `${BASE_URL}/${igUserId}?fields=is_user_follow_business&access_token=${encodeURIComponent(accessToken)}`;
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const data = (await res.json()) as { is_user_follow_business?: boolean };
+    return data.is_user_follow_business === true;
+  } catch {
+    return false;
   }
 }
 

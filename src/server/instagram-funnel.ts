@@ -117,6 +117,7 @@ export interface FunnelRuleRow {
   public_reply: string | null;
   funnel_id: string | null;
   active: boolean;
+  require_follow: boolean;
   created_at: string;
 }
 
@@ -138,6 +139,7 @@ const _fetchFunnelRules = createServerFn({ method: "GET" }).handler(async (): Pr
     public_reply: r.publicReply,
     funnel_id: r.funnelId,
     active: r.active,
+    require_follow: r.requireFollow,
     created_at: r.createdAt,
   }));
 });
@@ -155,6 +157,7 @@ const createRuleSchema = z.object({
   message: z.string().min(1),
   public_reply: z.string().nullable().optional(),
   funnel_id: z.string().nullable().optional(),
+  require_follow: z.boolean().optional(),
 }).refine((data) => data.trigger_type !== "comment" || !!data.post_id, {
   message: "post_id é obrigatório pra regra de comentário.",
   path: ["post_id"],
@@ -176,6 +179,7 @@ const _createFunnelRule = createServerFn({ method: "POST" })
       // Resposta pública não existe pra story — só faz sentido em comentário.
       publicReply: isComment ? data.public_reply?.trim() || null : null,
       funnelId: data.funnel_id ?? null,
+      requireFollow: data.require_follow ?? false,
     });
   });
 
@@ -188,6 +192,7 @@ export async function createFunnelRule(payload: {
   message: string;
   public_reply?: string | null;
   funnel_id?: string | null;
+  require_follow?: boolean;
 }): Promise<void> {
   await _createFunnelRule({ data: payload });
 }
@@ -198,6 +203,7 @@ const updateRuleSchema = z.object({
   message: z.string().min(1),
   public_reply: z.string().nullable().optional(),
   funnel_id: z.string().nullable().optional(),
+  require_follow: z.boolean().optional(),
 });
 
 const _updateFunnelRule = createServerFn({ method: "POST" })
@@ -216,6 +222,7 @@ const _updateFunnelRule = createServerFn({ method: "POST" })
         // Resposta pública não existe pra story, mesmo que venha preenchida.
         publicReply: existing.triggerType === "comment" ? data.public_reply?.trim() || null : null,
         funnelId: data.funnel_id ?? null,
+        requireFollow: data.require_follow ?? false,
       })
       .where(and(eq(instagramFunnelRules.id, data.id), eq(instagramFunnelRules.organizationId, organizationId)));
   });
@@ -226,6 +233,7 @@ export async function updateFunnelRule(payload: {
   message: string;
   public_reply?: string | null;
   funnel_id?: string | null;
+  require_follow?: boolean;
 }): Promise<void> {
   await _updateFunnelRule({ data: payload });
 }

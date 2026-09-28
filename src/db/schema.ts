@@ -107,6 +107,9 @@ export const instagramFunnelRules = pgTable("instagram_funnel_rules", {
   // mensagem. set null: apagar o funil não apaga a regra, só desconecta.
   funnelId: uuid("funnel_id").references((): AnyPgColumn => instagramFunnels.id, { onDelete: "set null" }),
   active: boolean("active").notNull().default(true),
+  // Fase 9 — exige seguir a conta antes de mandar a mensagem da regra;
+  // ver instagram_follow_gates pro estado de quem está esperando seguir.
+  requireFollow: boolean("require_follow").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -221,6 +224,27 @@ export const instagramFunnelSessions = pgTable(
   (t) => [
     // Uma pessoa só fica esperando em um funil por vez — entrar em outro sobrescreve.
     unique("instagram_funnel_sessions_user_key").on(t.organizationId, t.igUserId),
+  ]
+);
+
+// Estado de "essa pessoa precisa seguir a conta antes de receber a
+// mensagem da regra" (Fase 9) — apagado assim que confirma que segue.
+export const instagramFollowGates = pgTable(
+  "instagram_follow_gates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    igUserId: text("ig_user_id").notNull(),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => instagramFunnelLeads.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    // Só um gate pendente por contato — mesmo padrão de instagram_funnel_sessions.
+    unique("instagram_follow_gates_user_key").on(t.organizationId, t.igUserId),
   ]
 );
 
@@ -351,6 +375,10 @@ export const instagramFunnelSessionsRelations = relations(instagramFunnelSession
   funnel: one(instagramFunnels, { fields: [instagramFunnelSessions.funnelId], references: [instagramFunnels.id] }),
   currentNode: one(instagramFunnelNodes, { fields: [instagramFunnelSessions.currentNodeId], references: [instagramFunnelNodes.id] }),
   lead: one(instagramFunnelLeads, { fields: [instagramFunnelSessions.leadId], references: [instagramFunnelLeads.id] }),
+}));
+
+export const instagramFollowGatesRelations = relations(instagramFollowGates, ({ one }) => ({
+  lead: one(instagramFunnelLeads, { fields: [instagramFollowGates.leadId], references: [instagramFunnelLeads.id] }),
 }));
 
 export const instagramConversationsRelations = relations(instagramConversations, ({ one, many }) => ({
