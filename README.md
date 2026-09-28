@@ -26,8 +26,9 @@ Recuperação de senha ainda é manual: `npm run reset-password -- email nova-se
 Se já tinha um banco de antes, rode `npm run db:migrate` de novo pra pegar
 as migrações que faltam: `drizzle/0001_daily_venus.sql` (bloco Botões, Fase
 4), `drizzle/0002_robust_blazing_skull.sql` (gatilho Resposta ao story,
-Fase 6), `drizzle/0003_typical_kid_colt.sql` (Caixa de Entrada, Fase 7) e
-`drizzle/0004_chubby_thunderbolt_ross.sql` (Contatos/tags, Fase 8).
+Fase 6), `drizzle/0003_typical_kid_colt.sql` (Caixa de Entrada, Fase 7),
+`drizzle/0004_chubby_thunderbolt_ross.sql` (Contatos/tags, Fase 8) e
+`drizzle/0005_mushy_big_bertha.sql` (gate de seguir, Fase 9).
 
 ## Estrutura
 
@@ -75,7 +76,7 @@ docs/           # specs de design (funil, funil visual, scaffolding SaaS, auth s
 
 ### Tabelas em `schema.ts`
 
-`organizations`, `users`, `profiles`, `app_config` (config por organização — hoje só a chave da OpenAI), `instagram_connections`, `instagram_funnel_rules`, `instagram_funnel_leads`, `instagram_funnels`, `instagram_funnel_nodes`, `instagram_funnel_edges`, `instagram_funnel_sessions`, `instagram_conversations`, `instagram_messages`, `instagram_tags`, `instagram_contact_tags`.
+`organizations`, `users`, `profiles`, `app_config` (config por organização — hoje só a chave da OpenAI), `instagram_connections`, `instagram_funnel_rules`, `instagram_funnel_leads`, `instagram_funnels`, `instagram_funnel_nodes`, `instagram_funnel_edges`, `instagram_funnel_sessions`, `instagram_conversations`, `instagram_messages`, `instagram_tags`, `instagram_contact_tags`, `instagram_follow_gates`.
 
 ## O que falta pra virar SaaS de verdade
 
@@ -88,7 +89,7 @@ Ainda falta:
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
 5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Caixa de Entrada (histórico de Direct + resposta manual que pausa a automação, ver `docs/2026-09-25-caixa-de-entrada-design.md`) e Contatos (lista unificada, tags coloridas, origem do lead, ver `docs/2026-09-25-contatos-design.md`) já são reais.
-6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`) e gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) já implementados; Insights/analytics por automação, Smart Delay e Ir para outro funil seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
+6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`), gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) e gate "Exigir seguir antes de responder" por regra (ver `docs/2026-09-28-gate-seguir-antes-design.md` — **exige inscrever o app no webhook `messaging_postbacks` no painel da Meta, ver seção abaixo**) já implementados; Insights/analytics por automação, Smart Delay e Ir para outro funil seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
 
 ## Referência rápida da API do Instagram usada
 
@@ -100,3 +101,4 @@ Ainda falta:
 - Resposta a story: chega no mesmo webhook de mensagens (campo `messages`, já assinado — sem inscrição extra), com `message.reply_to.story = {id, url}` em vez de `reply_to.mid` (resposta a mensagem normal).
 - Resposta pública a comentário: `POST /{comment-id}/replies` com `{message}`.
 - Webhook: `entry[].changes[]` (campo `comments`) pra comentários; `entry[].messaging[]` pra DMs — filtrar `message.is_echo` pra não reprocessar a própria mensagem enviada.
+- Gate de seguir (Fase 9): botão "Ver perfil" + "Já segui" é um **button template** (`attachment.type: "template"`, `template_type: "button"`, até 3 botões, mistura `web_url` com `postback`). Clique no botão `postback` chega por um webhook **separado**, `messaging_postbacks` (não o `messages` normal) — precisa estar inscrito no painel do app (Meta for Developers → Instagram → Webhooks), senão o clique em "Já segui" nunca chega. Checar se a pessoa segue: `GET /{ig-user-id}?fields=is_user_follow_business`.
