@@ -28,7 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Sparkles, MousePointerClick } from "lucide-react";
+import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Sparkles, MousePointerClick, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { fetchFunnelGraph, saveFunnelGraph, fetchFunnels } from "@/server/instagram-funnel";
 
@@ -137,7 +137,26 @@ function QuickReplyNodeCard({ data }: NodeProps<Node<QuickReplyData>>) {
   );
 }
 
-const nodeTypes = { trigger: TriggerNodeCard, message: MessageNodeCard, condition: ConditionNodeCard, quick_reply: QuickReplyNodeCard };
+function FollowGateNodeCard() {
+  return (
+    <div className="rounded-xl border-2 border-rose-500/60 bg-rose-500/10 px-4 py-3 min-w-[200px] shadow-sm">
+      <Handle type="target" position={Position.Left} className="!bg-muted-foreground !w-3 !h-3" />
+      <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-semibold text-[10px] uppercase tracking-wide">
+        <UserPlus className="h-3.5 w-3.5" /> Seguir
+      </div>
+      <p className="text-sm mt-1 text-foreground/80">Se não seguir, manda o aviso e espera clicar em "Já segui".</p>
+      <Handle type="source" position={Position.Right} className="!bg-rose-500 !w-3 !h-3" />
+    </div>
+  );
+}
+
+const nodeTypes = {
+  trigger: TriggerNodeCard,
+  message: MessageNodeCard,
+  condition: ConditionNodeCard,
+  quick_reply: QuickReplyNodeCard,
+  follow_gate: FollowGateNodeCard,
+};
 
 function FunnelEditorPage() {
   const { funnelId } = useParams({ from: "/admin/instagram-funil-editor/$funnelId" });
@@ -181,7 +200,7 @@ function FunnelEditorPage() {
     [setEdges]
   );
 
-  const addNode = (type: "message" | "condition" | "quick_reply") => {
+  const addNode = (type: "message" | "condition" | "quick_reply" | "follow_gate") => {
     const id = crypto.randomUUID();
     const offset = nodes.length * 40;
     const data =
@@ -189,7 +208,9 @@ function FunnelEditorPage() {
         ? { message: "", file_base64: null, file_mimetype: null, file_filename: null }
         : type === "condition"
           ? { keywords: [], use_ai: false }
-          : { message: "", options: [] };
+          : type === "quick_reply"
+            ? { message: "", options: [] }
+            : {};
     setNodes((nds) => [...nds, { id, type, position: { x: 380 + offset, y: 120 + offset }, deletable: true, data }]);
   };
 
@@ -199,7 +220,7 @@ function FunnelEditorPage() {
         funnelId,
         nodes.map((n) => ({
           id: n.id,
-          type: n.type as "trigger" | "message" | "condition" | "quick_reply",
+          type: n.type as "trigger" | "message" | "condition" | "quick_reply" | "follow_gate",
           position_x: n.position.x,
           position_y: n.position.y,
           message:
@@ -240,6 +261,9 @@ function FunnelEditorPage() {
         <Button size="sm" variant="outline" className="gap-1.5" onClick={() => addNode("quick_reply")}>
           <Plus className="h-3.5 w-3.5" /> Botões
         </Button>
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => addNode("follow_gate")}>
+          <Plus className="h-3.5 w-3.5" /> Seguir
+        </Button>
         <Button size="sm" className="gap-1.5" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="h-3.5 w-3.5" /> {saveMutation.isPending ? "Salvando..." : "Salvar"}
         </Button>
@@ -252,7 +276,7 @@ function FunnelEditorPage() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          onNodeDoubleClick={(_, node) => { if (node.type !== "trigger") setEditingNode(node); }}
+          onNodeDoubleClick={(_, node) => { if (node.type !== "trigger" && node.type !== "follow_gate") setEditingNode(node); }}
           nodeTypes={nodeTypes}
           fitView
           colorMode="system"

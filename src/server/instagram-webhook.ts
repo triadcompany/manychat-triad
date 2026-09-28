@@ -364,22 +364,11 @@ async function processPostback(igBusinessAccountId: string, senderId: string, pa
   }
 }
 
-// Clique em "Já segui" — reconsulta se a pessoa segue de verdade. Segue:
-// apaga o gate, manda a mensagem original da regra (agora por DM comum, não
-// mais resposta privada ao comentário — já existe uma conversa aberta desde
-// o aviso) e entra no funil se a regra tiver um. Ainda não segue: reenvia o
-// aviso (variante de repetição), sem limite de tentativas.
-async function resolveFollowGate(igBusinessAccountId: string, igUserId: string): Promise<void> {
-  const connection = await db.query.instagramConnections.findFirst({
-    where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
-  });
-  if (!connection?.active) return;
-
-  const gate = await db.query.instagramFollowGates.findFirst({
-    where: and(eq(instagramFollowGates.organizationId, connection.organizationId), eq(instagramFollowGates.igUserId, igUserId)),
-  });
-  if (!gate) return; // clique órfão ou repetido depois de já resolvido
-
+// Confere se a pessoa segue de verdade; se não, reenvia o aviso (variante de
+// repetição) e devolve false — chamador decide o que fazer (nada, sem
+// limite de tentativas). Compartilhado pelos dois lugares onde alguém pode
+// estar esperando "Já segui": gate de entrada e bloco Seguir no funil.
+async function checkFollowOrRetry(connection: { accessToken: string }, igBusinessAccountId: string, igUserId: string): Promise<boolean> {
   const following = await fetchIsUserFollowing(connection.accessToken, igUserId);
   if (!following) {
     try {
@@ -387,8 +376,54 @@ async function resolveFollowGate(igBusinessAccountId: string, igUserId: string):
     } catch (err) {
       console.error("[instagram-webhook] falha ao reenviar aviso de seguir:", err);
     }
+  }
+  return following;
+}
+
+// Clique em "Já segui" — pode estar resolvendo o gate de entrada (regra com
+// requireFollow, antes de qualquer funil) ou um bloco Seguir parado no meio
+// de um funil. Confere os dois, nessa ordem.
+async function resolveFollowGate(igBusinessAccountId: string, igUserId: string): Promise<void> {
+  const connection = await db.query.instagramConnections.findFirst({
+    where: eq(instagramConnections.instagramBusinessAccountId, igBusinessAccountId),
+  });
+  if (!connection?.active) return;
+
+  const entryGate = await db.query.instagramFollowGates.findFirst({
+    where: and(eq(instagramFollowGates.organizationId, connection.organizationId), eq(instagramFollowGates.igUserId, igUserId)),
+  });
+  if (entryGate) {
+    await resolveEntryFollowGate(connection, igBusinessAccountId, igUserId, entryGate);
     return;
   }
+
+  const session = await db.query.instagramFunnelSessions.findFirst({
+    where: and(eq(instagramFunnelSessions.organizationId, connection.organizationId), eq(instagramFunnelSessions.igUserId, igUserId)),
+  });
+  if (!session) return; // clique órfão — nada pendente
+  const node = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, session.currentNodeId) });
+  if (node?.type !== "follow_gate") return; // sessão pendente é de outro bloco (Condição/Botões) — ignora
+
+  if (!(await checkFollowOrRetry(connection, igBusinessAccountId, igUserId))) return;
+
+  await db.delete(instagramFunnelSessions).where(eq(instagramFunnelSessions.id, session.id));
+  const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, session.currentNodeId) });
+  if (edge) {
+    await advanceFunnel(connection.accessToken, igBusinessAccountId, igUserId, session.funnelId, session.leadId, edge.targetNodeId);
+  }
+}
+
+// Gate de entrada resolvido: apaga o gate, manda a mensagem original da
+// regra (agora por DM comum, não mais resposta privada ao comentário — já
+// existe uma conversa aberta desde o aviso) e entra no funil se a regra
+// tiver um.
+async function resolveEntryFollowGate(
+  connection: { accessToken: string; organizationId: string },
+  igBusinessAccountId: string,
+  igUserId: string,
+  gate: { id: string; leadId: string }
+): Promise<void> {
+  if (!(await checkFollowOrRetry(connection, igBusinessAccountId, igUserId))) return;
 
   await db.delete(instagramFollowGates).where(eq(instagramFollowGates.id, gate.id));
 
@@ -440,6 +475,9 @@ async function processIncomingMessage(
   if (!session) return; // mensagem fora de qualquer funil — nada a fazer
 
   const node = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, session.currentNodeId) });
+  // Sessão parada num bloco Seguir só resolve pelo clique no botão (postback,
+  // ver resolveFollowGate) — texto solto não conta como "já segui".
+  if (node?.type === "follow_gate") return;
   // Sempre apaga a sessão antes de seguir — se não achar nó/aresta, o funil
   // só termina aqui, não fica uma sessão órfã esperando pra sempre.
   await db.delete(instagramFunnelSessions).where(eq(instagramFunnelSessions.id, session.id));
@@ -551,6 +589,28 @@ async function advanceFunnel(
   }
 
   if (node.type === "condition") {
+    await db
+      .insert(instagramFunnelSessions)
+      .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
+      .onConflictDoUpdate({
+        target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
+        set: { funnelId, currentNodeId: node.id, leadId, updatedAt: new Date().toISOString() },
+      });
+    return;
+  }
+
+  if (node.type === "follow_gate") {
+    if (await fetchIsUserFollowing(accessToken, igUserId)) {
+      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, node.id) });
+      if (edge) await advanceFunnel(accessToken, igBusinessAccountId, igUserId, funnelId, leadId, edge.targetNodeId);
+      return;
+    }
+    try {
+      await sendFollowGateMessage(accessToken, igBusinessAccountId, igUserId, "first");
+    } catch (err) {
+      console.error("[instagram-webhook] falha ao enviar aviso de seguir do funil:", err);
+      return;
+    }
     await db
       .insert(instagramFunnelSessions)
       .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })

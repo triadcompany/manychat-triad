@@ -134,3 +134,38 @@ criar/editar regra (funciona pra Comentário e Resposta a story).
 - Seguir de verdade e clicar em "Já segui": chega a mensagem original da
   regra (e entra no funil, se configurado); o lead vira "enviado" em
   Leads/Contatos.
+
+## Adendo — bloco "Seguir" no editor de funil
+
+Pedido do usuário depois da primeira entrega: além do switch por regra
+(que trava só a 1ª mensagem, antes do funil), poder colocar o mesmo gate
+**dentro do funil**, em qualquer ponto do fluxo de blocos. Mantém os dois
+mecanismos — não substitui o switch.
+
+**Novo tipo de nó**: `follow_gate` — sem configuração nenhuma (usa os
+mesmos textos fixos do gate de entrada), uma entrada e uma única saída
+(igual ao bloco Mensagem, não ramifica). Como `instagram_funnel_nodes.type`
+já é texto livre (sem enum no banco), não precisa de migração — só entra
+na lista de tipos válidos em `instagram-funnel.ts` e ganha um cartão novo
+no editor.
+
+**Motor (`advanceFunnel`)**: ao chegar num nó `follow_gate`, já seguindo →
+segue direto pra próxima aresta, sem mandar nada. Não seguindo → manda o
+aviso (texto "primeira vez") e grava uma `instagram_funnel_sessions`
+apontando pra esse nó (mesmo padrão de Condição/Botões) — pausa e espera.
+
+**Resolução do clique em "Já segui"**: como agora existem *dois* lugares
+onde alguém pode estar esperando (`instagram_follow_gates` pro gate de
+entrada, `instagram_funnel_sessions` apontando pra um nó `follow_gate`
+pro gate de funil), o handler do postback confere os dois, nessa ordem:
+gate de entrada primeiro (mais comum), senão sessão de funil parada num
+nó `follow_gate`. Confirmado que segue: apaga o estado pendente
+correspondente e segue (mensagem da regra + funil, no caso de entrada;
+só a aresta de saída do nó, no caso de bloco). Ainda não segue: reenvia o
+aviso de repetição nos dois casos, sem limite de tentativas.
+
+**Detalhe importante**: se a pessoa mandar uma mensagem de texto solta
+(em vez de clicar no botão) enquanto está esperando num bloco `follow_gate`,
+`processIncomingMessage` não deve apagar a sessão — só sessões paradas em
+Condição/Botões são resolvidas por texto/quick_reply comum. A sessão do
+gate só sai de pé pelo clique no postback.

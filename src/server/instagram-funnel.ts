@@ -380,7 +380,7 @@ export async function deleteFunnel(id: string): Promise<void> {
 
 export interface FunnelNodeRow {
   id: string;
-  type: "trigger" | "message" | "condition" | "quick_reply";
+  type: "trigger" | "message" | "condition" | "quick_reply" | "follow_gate";
   position_x: number;
   position_y: number;
   message: string | null;
@@ -414,7 +414,7 @@ const _fetchFunnelGraph = createServerFn({ method: "GET" })
     return {
       nodes: nodeRows.map((n) => ({
         id: n.id,
-        type: n.type as "trigger" | "message" | "condition" | "quick_reply",
+        type: n.type as "trigger" | "message" | "condition" | "quick_reply" | "follow_gate",
         position_x: n.positionX,
         position_y: n.positionY,
         message: n.message,
@@ -438,7 +438,7 @@ const saveGraphSchema = z.object({
   nodes: z.array(
     z.object({
       id: z.string(),
-      type: z.enum(["trigger", "message", "condition", "quick_reply"]),
+      type: z.enum(["trigger", "message", "condition", "quick_reply", "follow_gate"]),
       position_x: z.number(),
       position_y: z.number(),
       message: z.string().nullable().optional(),
