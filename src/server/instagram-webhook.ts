@@ -178,10 +178,36 @@ async function processComment(
     });
   }
 
+  // A resposta privada a comentário só permite UM bloco de conteúdo antes da
+  // pessoa responder (texto OU botões — nunca uma mensagem de texto seguida
+  // de outra). Se o funil já começa com um bloco Botões logo depois do
+  // Gatilho, funde os botões na própria resposta privada em vez de tentar
+  // mandar como uma 2ª mensagem depois (a Meta rejeita isso com "enviada
+  // fora do período permitido" — só abre janela de 24h quando a pessoa
+  // interage com um botão/quick reply, nunca antes disso).
+  let firstQuickReplyNode: { id: string; quickReplyOptions: unknown } | null = null;
+  if (rule.funnelId) {
+    const trigger = await db.query.instagramFunnelNodes.findFirst({
+      where: and(eq(instagramFunnelNodes.funnelId, rule.funnelId), eq(instagramFunnelNodes.type, "trigger")),
+    });
+    if (trigger) {
+      const firstEdge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
+      if (firstEdge) {
+        const targetNode = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, firstEdge.targetNodeId) });
+        if (targetNode?.type === "quick_reply") firstQuickReplyNode = targetNode;
+      }
+    }
+  }
+
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
   try {
-    await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message);
+    if (firstQuickReplyNode) {
+      const options = (firstQuickReplyNode.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+      await sendPrivateReplyWithQuickReplies(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message, options);
+    } else {
+      await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message);
+    }
     await logMessage(connection.organizationId, comment.fromId, "out", rule.message, comment.fromUsername, {
       type: "comment",
       detail: rule.keyword,
@@ -220,7 +246,27 @@ async function processComment(
   // Sem inserted = webhook reentregue pro mesmo comentário (já processado
   // antes) — não entra no funil de novo, senão duplicaria as mensagens.
   if (inserted) {
-    await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, comment.fromId, inserted.id);
+    if (firstQuickReplyNode) {
+      // Os botões já saíram junto da resposta privada acima — só grava a
+      // sessão esperando o clique (mesmo padrão de advanceFunnel), sem
+      // reenviar a mensagem do bloco Botões nem seu texto (que fica sem uso
+      // nesse caso — só a mensagem da regra + os botões são mandados).
+      await db
+        .insert(instagramFunnelSessions)
+        .values({
+          organizationId: connection.organizationId,
+          igUserId: comment.fromId,
+          funnelId: rule.funnelId!,
+          currentNodeId: firstQuickReplyNode.id,
+          leadId: inserted.id,
+        })
+        .onConflictDoUpdate({
+          target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
+          set: { funnelId: rule.funnelId!, currentNodeId: firstQuickReplyNode.id, leadId: inserted.id, updatedAt: new Date().toISOString() },
+        });
+    } else {
+      await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, comment.fromId, inserted.id);
+    }
   }
 
   return !!inserted;
@@ -647,6 +693,39 @@ async function sendPrivateReply(accessToken: string, igBusinessAccountId: string
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ recipient: { comment_id: commentId }, message: { text } }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Meta retornou ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
+// Resposta privada a comentário com botões — a documentação oficial da Meta
+// só mostra o payload com texto puro, mas na prática aceita quick_replies
+// no mesmo formato de uma mensagem normal (é assim que ferramentas como o
+// ManyChat conseguem botão já na 1ª mensagem depois do comentário).
+async function sendPrivateReplyWithQuickReplies(
+  accessToken: string,
+  igBusinessAccountId: string,
+  commentId: string,
+  text: string,
+  options: { id: string; label: string }[]
+): Promise<void> {
+  const url = `${BASE_URL}/${igBusinessAccountId}/messages?access_token=${encodeURIComponent(accessToken)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { comment_id: commentId },
+      message: {
+        text,
+        quick_replies: options.slice(0, 13).map((o) => ({
+          content_type: "text",
+          title: o.label.slice(0, 20),
+          payload: o.id,
+        })),
+      },
+    }),
   });
   if (!res.ok) {
     const body = await res.text();

@@ -169,3 +169,34 @@ aviso de repetição nos dois casos, sem limite de tentativas.
 `processIncomingMessage` não deve apagar a sessão — só sessões paradas em
 Condição/Botões são resolvidas por texto/quick_reply comum. A sessão do
 gate só sai de pé pelo clique no postback.
+
+## Adendo 2 — funil de comentário só avança depois de 1 resposta real (achado)
+
+Testando um funil real (Gatilho → Botões "Quero PDF" → Mensagem com PDF)
+ligado a uma regra de **comentário**, o bloco Botões nunca chegava —
+só a mensagem da própria regra. Causa raiz, confirmada nos docs da Meta:
+resposta privada a comentário (`sendPrivateReply`) só permite **uma
+mensagem, ponto** — qualquer segunda mensagem automática (de qualquer
+tipo de bloco) é rejeitada com `403 / code 10 / subcode 2534022`
+("enviada fora do período permitido") até a pessoa responder alguma
+coisa de volta. Isso vale só pra regra de **comentário** — resposta a
+story já é uma DM de verdade da pessoa, então a janela de 24h já abre
+normal e o funil encadeia sem esse problema.
+
+**Descoberta que resolve**: a resposta privada aceita, na prática,
+`quick_replies` no mesmo payload (a documentação oficial só mostra texto
+puro, mas o ManyChat documenta exatamente esse comportamento: "a 1ª
+resposta privada pode ter um único bloco de conteúdo — texto ou imagem,
+com botões ou quick replies" — e assim que a pessoa clica, a janela
+abre). Então: se o bloco ligado direto no Gatilho for **Botões**,
+`processComment` funde as opções desse bloco na própria resposta privada
+(mensagem da regra + botões, uma mensagem só) via
+`sendPrivateReplyWithQuickReplies`, e grava a sessão esperando o clique
+direto nesse nó — sem tentar mandar a mensagem do bloco Botões separada
+(que ficaria sem uso nesse caso).
+
+**Limitação que continua**: só o caso "Botões logo depois do Gatilho"
+tem essa fusão. Um funil de comentário que comece com Mensagem,
+Condição ou Seguir direto no Gatilho ainda esbarra na mesma regra (só
+uma mensagem antes da pessoa responder) — não tratado por não ter sido
+pedido ainda.
