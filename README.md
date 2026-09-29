@@ -30,8 +30,9 @@ Fase 6), `drizzle/0003_typical_kid_colt.sql` (Caixa de Entrada, Fase 7),
 `drizzle/0004_chubby_thunderbolt_ross.sql` (Contatos/tags, Fase 8),
 `drizzle/0005_mushy_big_bertha.sql` (gate de seguir, Fase 9),
 `drizzle/0006_normal_wong.sql` (regra sem mensagem própria, Fase 9.3),
-`drizzle/0007_nostalgic_vargas.sql` (testar funil, Fase 9.4) e
-`drizzle/0008_hard_gabe_jones.sql` (bloco Seguir editável, Fase 9.5).
+`drizzle/0007_nostalgic_vargas.sql` (testar funil, Fase 9.4),
+`drizzle/0008_hard_gabe_jones.sql` (bloco Seguir editável, Fase 9.5) e
+`drizzle/0009_lazy_logan.sql` (anexo como link, Fase 11).
 
 ## Estrutura
 
@@ -96,6 +97,7 @@ Ainda falta:
 7. **Regra sem mensagem própria (Fase 9.3)** — criar regra hoje só pede pra escolher um funil (obrigatório); o bloco Gatilho dele pra frente define a 1ª mensagem e o resto da conversa. Regra pré-Fase 9.3 sem funil continua funcionando com a mensagem antiga (grandfathered). Como a resposta privada a comentário só permite 1 mensagem antes da pessoa responder, só os blocos Botões e Mensagem logo depois do Gatilho têm tratamento especial pra isso (ver "Adendo 2/3" no doc do gate) — Condição/Seguir como 1º bloco de um funil de comentário ainda esbarram nessa restrição da Meta.
 8. **Testar funil sem ação real (Fase 9.4)** — botão "Testar funil" no editor manda pra um contato já com Direct aberto (escolhido dentre as conversas da Caixa de Entrada), usando a mesma engine de produção; não precisa de comentário/story real nem aparece na aba Leads (ver `docs/2026-09-28-testar-funil-design.md`).
 9. **Tema claro/escuro/sistema (Fase 10)** — seletor na barra lateral, persiste em `localStorage`, sem flash do tema errado no carregamento (ver `docs/2026-09-29-tema-claro-escuro-design.md`).
+10. **Anexo como link (Fase 11)** — bloco Mensagem com arquivo ganha um switch "Mandar como link em texto": em vez de anexo nativo (que passa pelo CDN da Meta e sempre mostra a tela "saindo do Facebook"), manda a mesma URL como link dentro de uma mensagem de texto normal, com legenda opcional.
 
 ## Referência rápida da API do Instagram usada
 
