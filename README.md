@@ -29,8 +29,9 @@ as migrações que faltam: `drizzle/0001_daily_venus.sql` (bloco Botões, Fase
 Fase 6), `drizzle/0003_typical_kid_colt.sql` (Caixa de Entrada, Fase 7),
 `drizzle/0004_chubby_thunderbolt_ross.sql` (Contatos/tags, Fase 8),
 `drizzle/0005_mushy_big_bertha.sql` (gate de seguir, Fase 9),
-`drizzle/0006_normal_wong.sql` (regra sem mensagem própria, Fase 9.3) e
-`drizzle/0007_nostalgic_vargas.sql` (testar funil, Fase 9.4).
+`drizzle/0006_normal_wong.sql` (regra sem mensagem própria, Fase 9.3),
+`drizzle/0007_nostalgic_vargas.sql` (testar funil, Fase 9.4) e
+`drizzle/0008_hard_gabe_jones.sql` (bloco Seguir editável, Fase 9.5).
 
 ## Estrutura
 
@@ -91,7 +92,7 @@ Ainda falta:
 3. **Billing** — se/quando for cobrar dos clientes.
 4. **Recuperação de senha self-service** — hoje é `scripts/reset-password.ts` rodado por vocês; precisa de envio de email pra virar self-service (mesma dependência que falta pra verificação de email no cadastro).
 5. **Estrutura estilo ManyChat** — navegação lateral (Início/Contatos/Automação/Caixa de Entrada/Configurações) já implementada (ver `docs/2026-09-25-navegacao-lateral-manychat-design.md`); Caixa de Entrada (histórico de Direct + resposta manual que pausa a automação, ver `docs/2026-09-25-caixa-de-entrada-design.md`) e Contatos (lista unificada, tags coloridas, origem do lead, ver `docs/2026-09-25-contatos-design.md`) já são reais.
-6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`), gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) e gate "seguir antes de responder" (ver `docs/2026-09-28-gate-seguir-antes-design.md` — **exige inscrever o app no webhook `messaging_postbacks` no painel da Meta, ver seção abaixo**), disponível tanto como switch por regra (trava a 1ª mensagem) quanto como bloco `follow_gate` no editor de funil (trava em qualquer ponto do fluxo), já implementados; Insights/analytics por automação, Smart Delay e Ir para outro funil seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
+6. **Automation mais rico** — bloco Botões (quick replies, ver `docs/2026-09-23-funil-botoes-resposta-rapida-design.md`), gatilho "Resposta ao story" (ver `docs/2026-09-25-gatilho-resposta-story-design.md`) e gate "seguir antes de responder" (ver `docs/2026-09-28-gate-seguir-antes-design.md` — **exige inscrever o app no webhook `messaging_postbacks` no painel da Meta, ver seção abaixo**), disponível tanto como switch por regra (trava a 1ª mensagem, texto fixo do sistema) quanto como bloco `follow_gate` no editor de funil (trava em qualquer ponto do fluxo, texto e rótulo dos botões editáveis — Fase 9.5), já implementados; Insights/analytics por automação, Smart Delay e Ir para outro funil seguem no roadmap. **Decisão**: o editor visual em blocos (React Flow) continua sendo o único jeito de montar o funil — não vira um assistente em formato de wizard, mesmo que o ManyChat ofereça essa opção mais simples também.
 7. **Regra sem mensagem própria (Fase 9.3)** — criar regra hoje só pede pra escolher um funil (obrigatório); o bloco Gatilho dele pra frente define a 1ª mensagem e o resto da conversa. Regra pré-Fase 9.3 sem funil continua funcionando com a mensagem antiga (grandfathered). Como a resposta privada a comentário só permite 1 mensagem antes da pessoa responder, só os blocos Botões e Mensagem logo depois do Gatilho têm tratamento especial pra isso (ver "Adendo 2/3" no doc do gate) — Condição/Seguir como 1º bloco de um funil de comentário ainda esbarram nessa restrição da Meta.
 8. **Testar funil sem ação real (Fase 9.4)** — botão "Testar funil" no editor manda pra um contato já com Direct aberto (escolhido dentre as conversas da Caixa de Entrada), usando a mesma engine de produção; não precisa de comentário/story real nem aparece na aba Leads (ver `docs/2026-09-28-testar-funil-design.md`).
 
