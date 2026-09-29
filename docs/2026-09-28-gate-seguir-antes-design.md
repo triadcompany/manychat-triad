@@ -236,6 +236,20 @@ privada e grava a sessão esperando o clique — resolveFollowGate já
 sabia lidar com essa sessão (mesmo mecanismo do bloco Seguir no meio do
 funil), só faltava alguém criar ela nesse caso específico.
 
+**Achado 2, mesmo dia**: quem **já segue** a conta pula o Seguir e cai
+no bloco seguinte — que no funil de teste real era uma Mensagem só com
+anexo (PDF), sem texto nenhum. `isMessageFirst` exigia `!!node.message`,
+sempre falso nesse caso (anexo desabilita o campo de texto) — caía no
+`rule.message` legado (nulo pra regra nova) ou "Oi! 👋". Fix: reaproveita
+`resolveMessageNodeText` (extraído de `sendMessageNodeContent`, Fase 11)
+— conta como "tem versão em texto" também quando `fileSendAsLink` está
+ligado (link + legenda opcional). **Efeito colateral pra quem já
+configurou um funil assim**: bloco Mensagem com anexo de verdade
+(`fileSendAsLink: false`) como 1º bloco efetivo de uma regra de
+comentário continua sem conseguir mandar nada — resposta privada só
+aceita texto puro, não dá pra contornar. Precisa ligar "Mandar como
+link em texto" nesse bloco pra funcionar nesse cenário específico.
+
 ## Adendo 3 — regra não guarda mais mensagem própria, funil é obrigatório
 
 Pedido do usuário: a regra não deveria ter campo de "Mensagem do DM"

@@ -201,14 +201,21 @@ async function processComment(
     }
   }
   const isQuickReplyFirst = firstStep?.node.type === "quick_reply";
-  const isMessageFirst = firstStep?.node.type === "message" && !!firstStep.node.message;
+  // Mensagem entra na fusão se tiver uma versão em texto puro pra mandar —
+  // texto normal, ou o link do anexo quando fileSendAsLink está ligado
+  // (anexo de verdade não tem versão em texto, resposta privada só aceita
+  // texto puro).
+  const messageFirstText = firstStep?.node.type === "message" ? resolveMessageNodeText(firstStep.node) : null;
+  const isMessageFirst = !!messageFirstText;
   const isFollowGateFirst = firstStep?.node.type === "follow_gate"; // só chega aqui se alreadyFollowing === false
   const gateContent = isFollowGateFirst ? followGateContentFromNode(firstStep!.node) : null;
-  const sentText = isQuickReplyFirst || isMessageFirst
+  const sentText = isQuickReplyFirst
     ? (firstStep!.node.message ?? "")
-    : gateContent
-      ? gateContent.first
-      : (rule.message ?? "Oi! 👋");
+    : isMessageFirst
+      ? messageFirstText!
+      : gateContent
+        ? gateContent.first
+        : (rule.message ?? "Oi! 👋");
 
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
@@ -824,11 +831,29 @@ async function classifyReplyWithAI(organizationId: string, text: string, keyword
   }
 }
 
+// Monta o texto de um bloco Mensagem quando ele TEM uma versão em texto
+// puro: texto normal, ou o link do anexo (+ legenda opcional) quando
+// fileSendAsLink está ligado. Anexo de verdade (sem link) não tem versão em
+// texto — devolve null (só dá pra mandar como attachment de verdade, via
+// sendMessageNodeContent, nunca dentro de uma resposta privada a
+// comentário, que só aceita texto). Compartilhado por processComment (pra
+// saber se pode fundir na resposta privada) e sendMessageNodeContent.
+function resolveMessageNodeText(node: { id: string; message: string | null; fileBase64: string | null; fileSendAsLink: boolean }): string | null {
+  if (node.fileBase64) {
+    if (!node.fileSendAsLink) return null;
+    // Anexo de verdade passa pelo CDN da Meta e sempre mostra a tela de
+    // aviso "link fora do Facebook" — como link em texto normal, não.
+    const appUrl = process.env.APP_URL;
+    if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
+    const fileUrl = `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`;
+    return node.message ? `${node.message}\n\n${fileUrl}` : fileUrl;
+  }
+  return node.message;
+}
+
 // Compartilhado por advanceFunnel e runFunnelTest — manda o conteúdo de um
-// bloco Mensagem (texto, anexo de arquivo, ou o link do anexo dentro de um
-// texto normal — ver fileSendAsLink). Deixa o erro subir pro chamador
-// decidir o que fazer (advanceFunnel só loga e para; runFunnelTest propaga
-// pro editor).
+// bloco Mensagem. Deixa o erro subir pro chamador decidir o que fazer
+// (advanceFunnel só loga e para; runFunnelTest propaga pro editor).
 async function sendMessageNodeContent(
   accessToken: string,
   igBusinessAccountId: string,
@@ -836,25 +861,20 @@ async function sendMessageNodeContent(
   igUserId: string,
   node: { id: string; message: string | null; fileBase64: string | null; fileFilename: string | null; fileSendAsLink: boolean }
 ): Promise<void> {
-  if (node.fileBase64) {
+  if (node.fileBase64 && !node.fileSendAsLink) {
     // A Meta busca o arquivo por URL pública própria, não aceita base64
     // direto na mensagem.
     const appUrl = process.env.APP_URL;
     if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
     const fileUrl = `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`;
-    if (node.fileSendAsLink) {
-      // Anexo de verdade passa pelo CDN da Meta e sempre mostra a tela de
-      // aviso "link fora do Facebook" — como link em texto normal, não.
-      const text = node.message ? `${node.message}\n\n${fileUrl}` : fileUrl;
+    await sendFileMessage(accessToken, igBusinessAccountId, igUserId, fileUrl);
+    await logMessage(organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`);
+  } else {
+    const text = resolveMessageNodeText(node);
+    if (text) {
       await sendDirectMessage(accessToken, igBusinessAccountId, igUserId, text);
       await logMessage(organizationId, igUserId, "out", text);
-    } else {
-      await sendFileMessage(accessToken, igBusinessAccountId, igUserId, fileUrl);
-      await logMessage(organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`);
     }
-  } else if (node.message) {
-    await sendDirectMessage(accessToken, igBusinessAccountId, igUserId, node.message);
-    await logMessage(organizationId, igUserId, "out", node.message);
   }
 }
 
