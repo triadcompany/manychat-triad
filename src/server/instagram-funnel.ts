@@ -382,6 +382,73 @@ export async function deleteFunnel(id: string): Promise<void> {
   await _deleteFunnel({ data: { id } });
 }
 
+// Clona um funil inteiro (nós + arestas) num novo funil, "(cópia)" no nome.
+// IDs dos nós são regerados; source_handle não precisa remapear (é um id
+// dentro do próprio JSON de opções/palavras-chave, copiado verbatim junto
+// com o nó — continua batendo com a aresta certa).
+const _duplicateFunnel = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ id: z.string() }))
+  .handler(async ({ data }): Promise<{ id: string }> => {
+    const { organizationId } = await requireOrgContext();
+    const original = await db.query.instagramFunnels.findFirst({
+      where: and(eq(instagramFunnels.id, data.id), eq(instagramFunnels.organizationId, organizationId)),
+    });
+    if (!original) throw new Error("Funil não encontrado.");
+
+    const [nodes, edges] = await Promise.all([
+      db.select().from(instagramFunnelNodes).where(eq(instagramFunnelNodes.funnelId, data.id)),
+      db.select().from(instagramFunnelEdges).where(eq(instagramFunnelEdges.funnelId, data.id)),
+    ]);
+
+    return db.transaction(async (tx) => {
+      const [newFunnel] = await tx
+        .insert(instagramFunnels)
+        .values({ organizationId, name: `${original.name} (cópia)` })
+        .returning({ id: instagramFunnels.id });
+
+      const idMap = new Map<string, string>();
+      for (const n of nodes) idMap.set(n.id, crypto.randomUUID());
+
+      if (nodes.length > 0) {
+        await tx.insert(instagramFunnelNodes).values(
+          nodes.map((n) => ({
+            id: idMap.get(n.id)!,
+            funnelId: newFunnel.id,
+            type: n.type,
+            positionX: n.positionX,
+            positionY: n.positionY,
+            message: n.message,
+            fileBase64: n.fileBase64,
+            fileMimetype: n.fileMimetype,
+            fileFilename: n.fileFilename,
+            fileSendAsLink: n.fileSendAsLink,
+            conditionKeywords: n.conditionKeywords,
+            conditionUseAi: n.conditionUseAi,
+            quickReplyOptions: n.quickReplyOptions,
+            followGateConfig: n.followGateConfig,
+          }))
+        );
+      }
+
+      if (edges.length > 0) {
+        await tx.insert(instagramFunnelEdges).values(
+          edges.map((e) => ({
+            funnelId: newFunnel.id,
+            sourceNodeId: idMap.get(e.sourceNodeId)!,
+            sourceHandle: e.sourceHandle,
+            targetNodeId: idMap.get(e.targetNodeId)!,
+          }))
+        );
+      }
+
+      return { id: newFunnel.id };
+    });
+  });
+
+export async function duplicateFunnel(id: string): Promise<{ id: string }> {
+  return _duplicateFunnel({ data: { id } });
+}
+
 export interface FunnelNodeRow {
   id: string;
   type: "trigger" | "message" | "condition" | "quick_reply" | "follow_gate";

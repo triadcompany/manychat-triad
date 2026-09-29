@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Instagram, Plus, Pencil, Trash2, ExternalLink, MessageCircle, Workflow, Clapperboard } from "lucide-react";
+import { Instagram, Plus, Pencil, Trash2, ExternalLink, MessageCircle, Workflow, Clapperboard, Copy } from "lucide-react";
 import { toast } from "sonner";
 import {
   fetchFunnelRules,
@@ -48,6 +48,7 @@ import {
   createFunnel,
   renameFunnel,
   deleteFunnel,
+  duplicateFunnel,
   type InstagramPostRow,
   type FunnelRuleRow,
   type FunnelRow,
@@ -496,6 +497,15 @@ function FunnelsTab() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["instagram-funnels"] }),
   });
 
+  const duplicateMutation = useMutation({
+    mutationFn: (id: string) => duplicateFunnel(id),
+    onSuccess: () => {
+      toast.success("Funil duplicado.");
+      queryClient.invalidateQueries({ queryKey: ["instagram-funnels"] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao duplicar funil"),
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
@@ -560,6 +570,15 @@ function FunnelsTab() {
                 </Link>
                 <Button size="icon" variant="ghost" onClick={() => { setRenaming(f); setRenameValue(f.name); }}>
                   <Pencil className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  title="Duplicar"
+                  disabled={duplicateMutation.isPending}
+                  onClick={() => duplicateMutation.mutate(f.id)}
+                >
+                  <Copy className="h-4 w-4" />
                 </Button>
                 <Button
                   size="icon"
