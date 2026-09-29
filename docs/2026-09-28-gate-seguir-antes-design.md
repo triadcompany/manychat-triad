@@ -211,13 +211,30 @@ abre). Então: se o bloco ligado direto no Gatilho for **Botões**,
 direto nesse nó — sem tentar mandar a mensagem do bloco Botões separada
 (que ficaria sem uso nesse caso).
 
-**Limitação que continua**: só os casos "Botões" e "Mensagem" logo
-depois do Gatilho têm tratamento especial (ver Adendo 3). Um funil de
-comentário que comece com Condição ou Seguir direto no Gatilho ainda
-esbarra na regra de 1 mensagem só — não tratado por ser configuração
-rara (Condição não tem texto próprio pra mandar; Seguir manda um button
-template, que também poderia ser fundido na resposta privada, mas isso
-ficou de fora por enquanto).
+**Limitação que continua**: só Condição direto no Gatilho de uma regra
+de comentário ainda esbarra na regra de 1 mensagem só (não tem texto
+próprio pra mandar, então não dá pra fundir nada) — configuração rara,
+não tratada.
+
+## Adendo 5 — bloco Seguir como 1º bloco de regra de comentário (bug real)
+
+Achado em produção: funil real (Gatilho → Seguir → Mensagem com PDF)
+numa regra de **comentário** nunca mandava o aviso de seguir — caía
+direto no texto antigo da regra (`rule.message`, um resquício de antes
+da Fase 9.3) ou em "Oi! 👋", porque `processComment` só tinha fusão
+pronta pra Botões e Mensagem — Seguir como 1º bloco não tinha
+tratamento nenhum (documentado como limitação conhecida, mas na
+prática batia direto no funil real de um cliente).
+
+**Fix**: mesma técnica de fusão do Botões, mas com button template em
+vez de quick_replies (`sendPrivateReplyWithButtonTemplate`, reaproveita
+`buildFollowGateButtons` — extraído de `sendFollowGateMessage`). Se a
+pessoa **já segue**, pula o bloco Seguir e resolve o próximo (mesma
+ideia recursiva simples — só 1 nível, não persegue uma cadeia de
+Seguir→Seguir). Se **não segue**, funde o aviso + botões na resposta
+privada e grava a sessão esperando o clique — resolveFollowGate já
+sabia lidar com essa sessão (mesmo mecanismo do bloco Seguir no meio do
+funil), só faltava alguém criar ela nesse caso específico.
 
 ## Adendo 3 — regra não guarda mais mensagem própria, funil é obrigatório
 

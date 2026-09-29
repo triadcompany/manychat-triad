@@ -187,11 +187,28 @@ async function processComment(
   // fora do período permitido"). Então: bloco Botões logo depois do
   // Gatilho funde as opções na própria resposta privada; bloco Mensagem
   // manda só o texto dele e cria uma sessão-sentinela esperando a próxima
-  // resposta (qualquer uma) pra liberar o resto.
-  const firstStep = rule.funnelId ? await resolveFirstFunnelStep(rule.funnelId) : null;
+  // resposta (qualquer uma) pra liberar o resto; bloco Seguir também funde
+  // (botões "Ver perfil"/"Já segui"), a não ser que a pessoa já siga, caso
+  // em que pula pro bloco seguinte (mesma ideia do isMessageFirst/etc).
+  let firstStep = rule.funnelId ? await resolveFirstFunnelStep(rule.funnelId) : null;
+  let alreadyFollowing: boolean | null = null;
+  if (firstStep?.node.type === "follow_gate") {
+    alreadyFollowing = await fetchIsUserFollowing(connection.accessToken, comment.fromId);
+    if (alreadyFollowing) {
+      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, firstStep.node.id) });
+      const nextNode = edge ? await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, edge.targetNodeId) }) : null;
+      firstStep = nextNode ? { node: nextNode, triggerId: firstStep.triggerId } : null;
+    }
+  }
   const isQuickReplyFirst = firstStep?.node.type === "quick_reply";
   const isMessageFirst = firstStep?.node.type === "message" && !!firstStep.node.message;
-  const sentText = isQuickReplyFirst || isMessageFirst ? (firstStep!.node.message ?? "") : (rule.message ?? "Oi! 👋");
+  const isFollowGateFirst = firstStep?.node.type === "follow_gate"; // só chega aqui se alreadyFollowing === false
+  const gateContent = isFollowGateFirst ? followGateContentFromNode(firstStep!.node) : null;
+  const sentText = isQuickReplyFirst || isMessageFirst
+    ? (firstStep!.node.message ?? "")
+    : gateContent
+      ? gateContent.first
+      : (rule.message ?? "Oi! 👋");
 
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
@@ -199,6 +216,9 @@ async function processComment(
     if (isQuickReplyFirst) {
       const options = (firstStep!.node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
       await sendPrivateReplyWithQuickReplies(connection.accessToken, igBusinessAccountId, comment.commentId, sentText, options);
+    } else if (gateContent) {
+      const buttons = await buildFollowGateButtons(connection.accessToken, igBusinessAccountId, gateContent);
+      await sendPrivateReplyWithButtonTemplate(connection.accessToken, igBusinessAccountId, comment.commentId, sentText, buttons);
     } else {
       await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, sentText);
     }
@@ -250,10 +270,17 @@ async function processComment(
       // qualquer coisa, e só então libera o resto (janela de 24h só abre
       // com uma resposta de verdade).
       await upsertFunnelSession(connection.organizationId, comment.fromId, rule.funnelId!, firstStep!.triggerId, inserted.id);
+    } else if (isFollowGateFirst) {
+      // O aviso (botões) já saiu junto da resposta privada acima — só grava
+      // a sessão esperando o clique em "Já segui" (resolveFollowGate já
+      // sabe achar essa sessão pelo tipo do nó, mesmo mecanismo do bloco
+      // Seguir no meio do funil).
+      await upsertFunnelSession(connection.organizationId, comment.fromId, rule.funnelId!, firstStep!.node.id, inserted.id);
     }
     // Sem funil (regra antiga) ou 1º bloco de um tipo sem fusão suportada
-    // ainda (Condição/Seguir/Mensagem só com anexo): já mandou a única
-    // mensagem permitida antes da pessoa responder, nada mais a fazer aqui.
+    // ainda (Condição, ou Seguir quando a pessoa já segue mas o bloco
+    // seguinte também não tem fusão): já mandou a única mensagem permitida
+    // antes da pessoa responder, nada mais a fazer aqui.
   }
 
   return !!inserted;
@@ -942,6 +969,36 @@ async function sendPrivateReplyWithQuickReplies(
   }
 }
 
+// Resposta privada a comentário com button template (mesma técnica de
+// sendPrivateReplyWithQuickReplies, mas pro aviso do bloco Seguir quando
+// ele é o 1º bloco ligado no Gatilho de uma regra de comentário).
+async function sendPrivateReplyWithButtonTemplate(
+  accessToken: string,
+  igBusinessAccountId: string,
+  commentId: string,
+  text: string,
+  buttons: TemplateButton[]
+): Promise<void> {
+  const url = `${BASE_URL}/${igBusinessAccountId}/messages?access_token=${encodeURIComponent(accessToken)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      recipient: { comment_id: commentId },
+      message: {
+        attachment: {
+          type: "template",
+          payload: { template_type: "button", text: text.slice(0, 640), buttons: buttons.slice(0, 3) },
+        },
+      },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Meta retornou ${res.status}: ${body.slice(0, 300)}`);
+  }
+}
+
 async function sendDirectMessage(accessToken: string, igBusinessAccountId: string, igUserId: string, text: string): Promise<void> {
   const url = `${BASE_URL}/${igBusinessAccountId}/messages?access_token=${encodeURIComponent(accessToken)}`;
   const res = await fetch(url, {
@@ -1025,6 +1082,23 @@ async function sendButtonTemplate(
 
 // Monta e manda o aviso do gate de seguir — "Ver perfil" (só se conseguir
 // descobrir o @ da própria conta conectada) + "Já segui" (postback).
+// Monta os botões "Ver perfil"/"Já segui" — compartilhado entre o aviso
+// mandado por DM comum (sendFollowGateMessage) e o fundido na resposta
+// privada a comentário (sendPrivateReplyWithButtonTemplate, ver processComment).
+async function buildFollowGateButtons(
+  accessToken: string,
+  igBusinessAccountId: string,
+  content: FollowGateContent
+): Promise<TemplateButton[]> {
+  const ownUsername = await fetchInstagramUsername(accessToken, igBusinessAccountId);
+  const buttons: TemplateButton[] = [];
+  if (ownUsername) {
+    buttons.push({ type: "web_url", title: content.profileLabel.slice(0, 20), url: `https://www.instagram.com/${ownUsername}` });
+  }
+  buttons.push({ type: "postback", title: content.confirmLabel.slice(0, 20), payload: GATE_CONFIRM_PAYLOAD });
+  return buttons;
+}
+
 async function sendFollowGateMessage(
   accessToken: string,
   igBusinessAccountId: string,
@@ -1032,13 +1106,7 @@ async function sendFollowGateMessage(
   variant: "first" | "retry",
   content: FollowGateContent = DEFAULT_GATE_CONTENT
 ): Promise<void> {
-  const ownUsername = await fetchInstagramUsername(accessToken, igBusinessAccountId);
-  const buttons: TemplateButton[] = [];
-  if (ownUsername) {
-    buttons.push({ type: "web_url", title: content.profileLabel.slice(0, 20), url: `https://www.instagram.com/${ownUsername}` });
-  }
-  buttons.push({ type: "postback", title: content.confirmLabel.slice(0, 20), payload: GATE_CONFIRM_PAYLOAD });
-
+  const buttons = await buildFollowGateButtons(accessToken, igBusinessAccountId, content);
   await sendButtonTemplate(accessToken, igBusinessAccountId, igUserId, variant === "first" ? content.first : content.retry, buttons);
 }
 
