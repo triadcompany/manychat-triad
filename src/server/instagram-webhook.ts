@@ -444,40 +444,60 @@ export const runFunnelTest = createServerOnlyFn(async (
     })
     .returning({ id: instagramFunnelLeads.id });
 
-  const isQuickReplyFirst = firstStep.node.type === "quick_reply";
-  const isMessageFirst = firstStep.node.type === "message" && !!firstStep.node.message && !firstStep.node.fileBase64;
+  const node = firstStep.node;
 
-  if (isQuickReplyFirst || isMessageFirst) {
-    try {
-      if (isQuickReplyFirst) {
-        const options = (firstStep.node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
-        await sendDirectMessageWithQuickReplies(
+  if (node.type === "condition") {
+    // Não manda nada — Condição só interpreta uma resposta anterior, então
+    // só cria a sessão esperando (mesmo comportamento de uma entrada de
+    // verdade nesse caso raro/mal configurado como 1º bloco).
+    await upsertFunnelSession(organizationId, igUserId, funnelId, node.id, testLead.id);
+    return { ok: true };
+  }
+
+  // Replica o envio de cada tipo (em vez de delegar cego pra advanceFunnel)
+  // pra conseguir devolver o erro de verdade pro editor — advanceFunnel só
+  // loga no servidor e retorna, nunca propaga falha pro chamador.
+  try {
+    if (node.type === "quick_reply") {
+      const options = (node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+      await sendDirectMessageWithQuickReplies(connection.accessToken, connection.instagramBusinessAccountId, igUserId, node.message ?? "", options);
+      await logMessage(organizationId, igUserId, "out", node.message ?? "", null);
+      await upsertFunnelSession(organizationId, igUserId, funnelId, node.id, testLead.id);
+    } else if (node.type === "message") {
+      if (node.fileBase64) {
+        const appUrl = process.env.APP_URL;
+        if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
+        await sendFileMessage(
           connection.accessToken,
           connection.instagramBusinessAccountId,
           igUserId,
-          firstStep.node.message ?? "",
-          options
+          `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`
         );
-        await logMessage(organizationId, igUserId, "out", firstStep.node.message ?? "", null);
-        await upsertFunnelSession(organizationId, igUserId, funnelId, firstStep.node.id, testLead.id);
-      } else {
-        await sendDirectMessage(connection.accessToken, connection.instagramBusinessAccountId, igUserId, firstStep.node.message!);
-        await logMessage(organizationId, igUserId, "out", firstStep.node.message!, null);
-        const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, firstStep.node.id) });
+        await logMessage(organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`, null);
+      } else if (node.message) {
+        await sendDirectMessage(connection.accessToken, connection.instagramBusinessAccountId, igUserId, node.message);
+        await logMessage(organizationId, igUserId, "out", node.message, null);
+      }
+      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, node.id) });
+      if (edge) {
+        await advanceFunnel(connection.accessToken, connection.instagramBusinessAccountId, igUserId, funnelId, testLead.id, edge.targetNodeId);
+      }
+    } else if (node.type === "follow_gate") {
+      const content = followGateContentFromNode(node);
+      if (await fetchIsUserFollowing(connection.accessToken, igUserId)) {
+        const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, node.id) });
         if (edge) {
           await advanceFunnel(connection.accessToken, connection.instagramBusinessAccountId, igUserId, funnelId, testLead.id, edge.targetNodeId);
         }
+      } else {
+        await sendFollowGateMessage(connection.accessToken, connection.instagramBusinessAccountId, igUserId, "first", content);
+        await upsertFunnelSession(organizationId, igUserId, funnelId, node.id, testLead.id);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await db.update(instagramFunnelLeads).set({ status: "failed", errorMessage: message }).where(eq(instagramFunnelLeads.id, testLead.id));
-      return { ok: false, error: message };
     }
-  } else {
-    // Condição/Seguir/Mensagem só com anexo como 1º bloco — advanceFunnel já
-    // sabe mandar cada um; erro vira log no servidor, não é capturado aqui
-    // (mesmo comportamento de uma entrada de verdade nesse mesmo caso).
-    await advanceFunnel(connection.accessToken, connection.instagramBusinessAccountId, igUserId, funnelId, testLead.id, firstStep.node.id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db.update(instagramFunnelLeads).set({ status: "failed", errorMessage: message }).where(eq(instagramFunnelLeads.id, testLead.id));
+    return { ok: false, error: message };
   }
 
   return { ok: true };
