@@ -1,0 +1,1 @@
+ALTER TABLE "instagram_funnel_nodes" ADD COLUMN "file_send_as_link" boolean DEFAULT false NOT NULL;

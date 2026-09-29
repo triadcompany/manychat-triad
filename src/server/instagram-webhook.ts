@@ -464,20 +464,7 @@ export const runFunnelTest = createServerOnlyFn(async (
       await logMessage(organizationId, igUserId, "out", node.message ?? "", null);
       await upsertFunnelSession(organizationId, igUserId, funnelId, node.id, testLead.id);
     } else if (node.type === "message") {
-      if (node.fileBase64) {
-        const appUrl = process.env.APP_URL;
-        if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
-        await sendFileMessage(
-          connection.accessToken,
-          connection.instagramBusinessAccountId,
-          igUserId,
-          `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`
-        );
-        await logMessage(organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`, null);
-      } else if (node.message) {
-        await sendDirectMessage(connection.accessToken, connection.instagramBusinessAccountId, igUserId, node.message);
-        await logMessage(organizationId, igUserId, "out", node.message, null);
-      }
+      await sendMessageNodeContent(connection.accessToken, connection.instagramBusinessAccountId, organizationId, igUserId, node);
       const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, node.id) });
       if (edge) {
         await advanceFunnel(connection.accessToken, connection.instagramBusinessAccountId, igUserId, funnelId, testLead.id, edge.targetNodeId);
@@ -810,6 +797,40 @@ async function classifyReplyWithAI(organizationId: string, text: string, keyword
   }
 }
 
+// Compartilhado por advanceFunnel e runFunnelTest — manda o conteúdo de um
+// bloco Mensagem (texto, anexo de arquivo, ou o link do anexo dentro de um
+// texto normal — ver fileSendAsLink). Deixa o erro subir pro chamador
+// decidir o que fazer (advanceFunnel só loga e para; runFunnelTest propaga
+// pro editor).
+async function sendMessageNodeContent(
+  accessToken: string,
+  igBusinessAccountId: string,
+  organizationId: string,
+  igUserId: string,
+  node: { id: string; message: string | null; fileBase64: string | null; fileFilename: string | null; fileSendAsLink: boolean }
+): Promise<void> {
+  if (node.fileBase64) {
+    // A Meta busca o arquivo por URL pública própria, não aceita base64
+    // direto na mensagem.
+    const appUrl = process.env.APP_URL;
+    if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
+    const fileUrl = `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`;
+    if (node.fileSendAsLink) {
+      // Anexo de verdade passa pelo CDN da Meta e sempre mostra a tela de
+      // aviso "link fora do Facebook" — como link em texto normal, não.
+      const text = node.message ? `${node.message}\n\n${fileUrl}` : fileUrl;
+      await sendDirectMessage(accessToken, igBusinessAccountId, igUserId, text);
+      await logMessage(organizationId, igUserId, "out", text);
+    } else {
+      await sendFileMessage(accessToken, igBusinessAccountId, igUserId, fileUrl);
+      await logMessage(organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`);
+    }
+  } else if (node.message) {
+    await sendDirectMessage(accessToken, igBusinessAccountId, igUserId, node.message);
+    await logMessage(organizationId, igUserId, "out", node.message);
+  }
+}
+
 // Segue o grafo a partir de um nó: manda mensagens em sequência sem pausa
 // até bater numa Condição ou num bloco Botões, onde grava a sessão e para
 // pra esperar a próxima resposta da pessoa.
@@ -830,17 +851,7 @@ async function advanceFunnel(
 
   if (node.type === "message") {
     try {
-      if (node.fileBase64) {
-        // Anexo (ex: PDF) — a Meta busca o arquivo por URL pública própria,
-        // não aceita base64 direto na mensagem.
-        const appUrl = process.env.APP_URL;
-        if (!appUrl) throw new Error("APP_URL não configurada — necessária pra anexo de arquivo.");
-        await sendFileMessage(accessToken, igBusinessAccountId, igUserId, `${appUrl.replace(/\/+$/, "")}/api/instagram-files/${node.id}`);
-        await logMessage(funnel.organizationId, igUserId, "out", `[arquivo: ${node.fileFilename ?? "anexo"}]`);
-      } else if (node.message) {
-        await sendDirectMessage(accessToken, igBusinessAccountId, igUserId, node.message);
-        await logMessage(funnel.organizationId, igUserId, "out", node.message);
-      }
+      await sendMessageNodeContent(accessToken, igBusinessAccountId, funnel.organizationId, igUserId, node);
     } catch (err) {
       console.error("[instagram-webhook] falha ao enviar mensagem do funil:", err);
       return; // não segue adiante se a mensagem não saiu

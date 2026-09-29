@@ -64,6 +64,13 @@
       "when": 1790642672050,
       "tag": "0008_hard_gabe_jones",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790647402115,
+      "tag": "0009_lazy_logan",
+      "breakpoints": true
     }
   ]
 }

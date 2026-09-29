@@ -45,6 +45,7 @@ interface MessageData extends Record<string, unknown> {
   file_base64: string | null;
   file_mimetype: string | null;
   file_filename: string | null;
+  file_send_as_link: boolean;
 }
 interface ConditionData extends Record<string, unknown> {
   keywords: { id: string; keyword: string }[];
@@ -82,7 +83,9 @@ function MessageNodeCard({ data }: NodeProps<Node<MessageData>>) {
       </div>
       {data.file_filename ? (
         <p className="text-sm mt-1 flex items-center gap-1.5 text-foreground/90">
-          <Paperclip className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{data.file_filename}</span>
+          <Paperclip className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">{data.file_filename}</span>
+          {data.file_send_as_link && <span className="text-[10px] text-muted-foreground shrink-0">(como link)</span>}
         </p>
       ) : (
         <p className="text-sm mt-1 line-clamp-3 whitespace-pre-wrap">{data.message || "Clique 2x pra escrever a mensagem..."}</p>
@@ -194,7 +197,13 @@ function FunnelEditorPage() {
         deletable: n.type !== "trigger",
         data:
           n.type === "message"
-            ? { message: n.message ?? "", file_base64: n.file_base64, file_mimetype: n.file_mimetype, file_filename: n.file_filename }
+            ? {
+                message: n.message ?? "",
+                file_base64: n.file_base64,
+                file_mimetype: n.file_mimetype,
+                file_filename: n.file_filename,
+                file_send_as_link: n.file_send_as_link,
+              }
             : n.type === "condition"
               ? { keywords: n.condition_keywords, use_ai: n.condition_use_ai }
               : n.type === "quick_reply"
@@ -225,7 +234,7 @@ function FunnelEditorPage() {
     const offset = nodes.length * 40;
     const data =
       type === "message"
-        ? { message: "", file_base64: null, file_mimetype: null, file_filename: null }
+        ? { message: "", file_base64: null, file_mimetype: null, file_filename: null, file_send_as_link: false }
         : type === "condition"
           ? { keywords: [], use_ai: false }
           : type === "quick_reply"
@@ -254,6 +263,7 @@ function FunnelEditorPage() {
           file_base64: n.type === "message" ? (n.data as MessageData).file_base64 : null,
           file_mimetype: n.type === "message" ? (n.data as MessageData).file_mimetype : null,
           file_filename: n.type === "message" ? (n.data as MessageData).file_filename : null,
+          file_send_as_link: n.type === "message" ? (n.data as MessageData).file_send_as_link : false,
           condition_keywords: n.type === "condition" ? (n.data as ConditionData).keywords : [],
           condition_use_ai: n.type === "condition" ? (n.data as ConditionData).use_ai : false,
           quick_reply_options: n.type === "quick_reply" ? (n.data as QuickReplyData).options : [],
@@ -465,11 +475,12 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-type MessagePatch = Pick<MessageData, "message" | "file_base64" | "file_mimetype" | "file_filename">;
+type MessagePatch = Pick<MessageData, "message" | "file_base64" | "file_mimetype" | "file_filename" | "file_send_as_link">;
 
 function MessageNodeEditor({ data, onSave }: { data: MessageData; onSave: (patch: MessagePatch) => void }) {
   const [message, setMessage] = useState(data.message);
   const [file, setFile] = useState({ base64: data.file_base64, mimetype: data.file_mimetype, filename: data.file_filename });
+  const [sendAsLink, setSendAsLink] = useState(data.file_send_as_link);
 
   const handleFile = async (f: File | undefined) => {
     if (!f) return;
@@ -480,6 +491,11 @@ function MessageNodeEditor({ data, onSave }: { data: MessageData; onSave: (patch
     const base64 = await readFileAsBase64(f);
     setFile({ base64, mimetype: f.type || "application/octet-stream", filename: f.name });
   };
+
+  // Sem arquivo, ou com arquivo mas mandando como link (nesse caso o texto
+  // vira a legenda que acompanha o link) — só com anexo de verdade que o
+  // texto fica sem uso.
+  const textDisabled = !!file.base64 && !sendAsLink;
 
   return (
     <DialogContent>
@@ -494,8 +510,8 @@ function MessageNodeEditor({ data, onSave }: { data: MessageData; onSave: (patch
             onChange={(e) => setMessage(e.target.value)}
             className="min-h-[100px]"
             autoFocus
-            disabled={!!file.base64}
-            placeholder={file.base64 ? "Ignorado enquanto tiver um arquivo anexado" : undefined}
+            disabled={textDisabled}
+            placeholder={textDisabled ? "Ignorado enquanto tiver um arquivo anexado" : "Ex: Segue o material que prometi 👇"}
           />
         </div>
         <div className="space-y-1.5">
@@ -512,12 +528,35 @@ function MessageNodeEditor({ data, onSave }: { data: MessageData; onSave: (patch
             <Input type="file" onChange={(e) => handleFile(e.target.files?.[0])} />
           )}
           <p className="text-[11px] text-muted-foreground">
-            Anexando um arquivo, a mensagem manda só ele (o texto acima é ignorado). Até 25MB.
+            Anexando um arquivo, a mensagem manda só ele (o texto acima é ignorado, a não ser que mande como link
+            abaixo). Até 25MB.
           </p>
         </div>
+        {file.base64 && (
+          <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
+            <div className="space-y-0.5">
+              <Label>Mandar como link em texto</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Anexo de verdade passa pelo CDN da Meta e sempre mostra uma tela de aviso ("link fora do Facebook")
+                antes de abrir. Como link em texto normal, evita essa tela — mas perde a aparência de anexo nativo.
+              </p>
+            </div>
+            <Switch checked={sendAsLink} onCheckedChange={setSendAsLink} />
+          </div>
+        )}
       </div>
       <DialogFooter>
-        <Button onClick={() => onSave({ message, file_base64: file.base64, file_mimetype: file.mimetype, file_filename: file.filename })}>
+        <Button
+          onClick={() =>
+            onSave({
+              message,
+              file_base64: file.base64,
+              file_mimetype: file.mimetype,
+              file_filename: file.filename,
+              file_send_as_link: sendAsLink,
+            })
+          }
+        >
           Salvar bloco
         </Button>
       </DialogFooter>

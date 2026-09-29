@@ -391,6 +391,7 @@ export interface FunnelNodeRow {
   file_base64: string | null;
   file_mimetype: string | null;
   file_filename: string | null;
+  file_send_as_link: boolean;
   condition_keywords: { id: string; keyword: string }[];
   condition_use_ai: boolean;
   quick_reply_options: { id: string; label: string }[];
@@ -429,6 +430,7 @@ const _fetchFunnelGraph = createServerFn({ method: "GET" })
         file_base64: n.fileBase64,
         file_mimetype: n.fileMimetype,
         file_filename: n.fileFilename,
+        file_send_as_link: n.fileSendAsLink,
         condition_keywords: (n.conditionKeywords as { id: string; keyword: string }[] | null) ?? [],
         condition_use_ai: n.conditionUseAi,
         quick_reply_options: (n.quickReplyOptions as { id: string; label: string }[] | null) ?? [],
@@ -456,6 +458,7 @@ const saveGraphSchema = z.object({
       file_base64: z.string().nullable().optional(),
       file_mimetype: z.string().nullable().optional(),
       file_filename: z.string().nullable().optional(),
+      file_send_as_link: z.boolean().optional(),
       condition_keywords: z.array(z.object({ id: z.string(), keyword: z.string() })).optional(),
       condition_use_ai: z.boolean().optional(),
       // Limites da API de quick_replies da Meta: até 13 botões, rótulo até
@@ -504,6 +507,7 @@ const _saveFunnelGraph = createServerFn({ method: "POST" })
             fileBase64: n.type === "message" ? (n.file_base64 ?? null) : null,
             fileMimetype: n.type === "message" ? (n.file_mimetype ?? null) : null,
             fileFilename: n.type === "message" ? (n.file_filename ?? null) : null,
+            fileSendAsLink: n.type === "message" ? (n.file_send_as_link ?? false) : false,
             conditionKeywords: n.type === "condition" ? (n.condition_keywords ?? []) : [],
             conditionUseAi: n.type === "condition" ? (n.condition_use_ai ?? false) : false,
             quickReplyOptions: n.type === "quick_reply" ? (n.quick_reply_options ?? []) : [],

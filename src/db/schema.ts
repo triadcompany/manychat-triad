@@ -168,6 +168,11 @@ export const instagramFunnelNodes = pgTable("instagram_funnel_nodes", {
   fileBase64: text("file_base64"),
   fileMimetype: text("file_mimetype"),
   fileFilename: text("file_filename"),
+  // Anexo de verdade passa pelo CDN da Meta (fbsbx.com) e sempre mostra a
+  // tela de aviso "link fora do Facebook" antes de abrir — se marcado, manda
+  // a mesma URL como link dentro do texto normal em vez de anexo nativo,
+  // evitando esse aviso (mas perde a aparência de anexo do Instagram).
+  fileSendAsLink: boolean("file_send_as_link").notNull().default(false),
   // só type='condition' — array de { id: uuid, keyword: string }, um por
   // saída (fora a saída fixa "Nenhuma bateu", que não precisa de linha própria)
   conditionKeywords: jsonb("condition_keywords").notNull().default([]),
