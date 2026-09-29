@@ -98,6 +98,7 @@ Ainda falta:
 8. **Testar funil sem ação real (Fase 9.4)** — botão "Testar funil" no editor manda pra um contato já com Direct aberto (escolhido dentre as conversas da Caixa de Entrada), usando a mesma engine de produção; não precisa de comentário/story real nem aparece na aba Leads (ver `docs/2026-09-28-testar-funil-design.md`).
 9. **Tema claro/escuro/sistema (Fase 10)** — seletor na barra lateral, persiste em `localStorage`, sem flash do tema errado no carregamento (ver `docs/2026-09-29-tema-claro-escuro-design.md`).
 10. **Anexo como link (Fase 11)** — bloco Mensagem com arquivo ganha um switch "Mandar como link em texto": em vez de anexo nativo (que passa pelo CDN da Meta e sempre mostra a tela "saindo do Facebook"), manda a mesma URL como link dentro de uma mensagem de texto normal, com legenda opcional.
+11. **Duplicar funil (Fase 12)** — botão na aba Funis clona nós e arestas inteiros num novo funil ("(cópia)" no nome).
 
 ## Referência rápida da API do Instagram usada
 
