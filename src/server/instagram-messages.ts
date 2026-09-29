@@ -59,12 +59,26 @@ export interface ConversationRow {
   ig_username: string | null;
   last_message_preview: string;
   last_message_at: string;
+  // Última mensagem que a PESSOA mandou (direction='in') — diferente de
+  // last_message_at, que também conta mensagem nossa (bot/manual) e por
+  // isso não serve pra saber se a janela de 24h da Meta ainda está aberta.
+  last_inbound_at: string | null;
 }
 
 const _fetchConversations = createServerFn({ method: "GET" }).handler(async (): Promise<ConversationRow[]> => {
   const { organizationId } = await requireOrgContext();
   const rows = await db
-    .select()
+    .select({
+      id: instagramConversations.id,
+      igUserId: instagramConversations.igUserId,
+      igUsername: instagramConversations.igUsername,
+      lastMessagePreview: instagramConversations.lastMessagePreview,
+      lastMessageAt: instagramConversations.lastMessageAt,
+      lastInboundAt: sql<string | null>`(
+        select max(m.created_at) from instagram_messages m
+        where m.conversation_id = ${instagramConversations.id} and m.direction = 'in'
+      )`,
+    })
     .from(instagramConversations)
     .where(eq(instagramConversations.organizationId, organizationId))
     .orderBy(desc(instagramConversations.lastMessageAt));
@@ -73,6 +87,7 @@ const _fetchConversations = createServerFn({ method: "GET" }).handler(async (): 
     ig_username: r.igUsername,
     last_message_preview: r.lastMessagePreview,
     last_message_at: r.lastMessageAt,
+    last_inbound_at: r.lastInboundAt,
   }));
 });
 

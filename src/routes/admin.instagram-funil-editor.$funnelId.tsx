@@ -385,7 +385,9 @@ function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: ()
   const [igUserId, setIgUserId] = useState("");
 
   const { data: allConversations = [], isLoading } = useQuery({ queryKey: ["instagram-conversations"], queryFn: fetchConversations });
-  const conversations = allConversations.filter((c) => isWithinWindow(c.last_message_at));
+  // Filtra pela última mensagem que a PESSOA mandou (não conta envio nosso,
+  // que não abre janela nenhuma) — ver last_inbound_at em instagram-messages.ts.
+  const conversations = allConversations.filter((c) => c.last_inbound_at && isWithinWindow(c.last_inbound_at));
 
   const testMutation = useMutation({
     mutationFn: () => testFunnel(funnelId, igUserId),
@@ -411,8 +413,8 @@ function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: ()
         ) : conversations.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {allConversations.length === 0
-              ? "Nenhuma conversa ainda pra testar. Precisa de um contato que tenha trocado Direct com a conta conectada nas últimas 24h — manda um Direct qualquer pra sua própria conta e ele aparece aqui."
-              : "As conversas existentes já passaram das 24h — a Meta fecha a janela de envio depois disso, mesmo já tendo histórico. Manda uma mensagem nova (pra sua própria conta, por exemplo) e teste de novo."}
+              ? "Nenhuma conversa ainda pra testar. Precisa de um contato que tenha mandado uma mensagem pra conta conectada nas últimas 24h — manda um Direct qualquer da sua própria conta pessoal e ele aparece aqui."
+              : "As conversas existentes já passaram das 24h desde a última mensagem que a PESSOA mandou (mensagem nossa não conta) — a Meta fecha a janela de envio depois disso. Manda uma mensagem nova (da sua conta pessoal, por exemplo) e teste de novo."}
           </p>
         ) : (
           <>
@@ -423,7 +425,7 @@ function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: ()
                 <SelectContent>
                   {conversations.map((c) => (
                     <SelectItem key={c.ig_user_id} value={c.ig_user_id}>
-                      {c.ig_username ? `@${c.ig_username}` : c.ig_user_id} — {formatRelativeTime(c.last_message_at)}
+                      {c.ig_username ? `@${c.ig_username}` : c.ig_user_id} — {formatRelativeTime(c.last_inbound_at!)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -431,7 +433,7 @@ function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: ()
             </div>
             <p className="text-[11px] text-muted-foreground">
               Manda o funil de verdade a partir do bloco Gatilho pra esse contato — não cria lead na aba Leads. Só
-              aparecem contatos com mensagem nas últimas 24h (janela de envio da Meta).
+              aparecem contatos que mandaram mensagem nas últimas 24h (janela de envio da Meta).
             </p>
           </>
         )}
