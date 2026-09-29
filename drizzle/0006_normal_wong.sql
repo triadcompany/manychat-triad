@@ -1,0 +1,1 @@
+ALTER TABLE "instagram_funnel_rules" ALTER COLUMN "message" DROP NOT NULL;

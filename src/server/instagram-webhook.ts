@@ -178,37 +178,30 @@ async function processComment(
     });
   }
 
-  // A resposta privada a comentário só permite UM bloco de conteúdo antes da
-  // pessoa responder (texto OU botões — nunca uma mensagem de texto seguida
-  // de outra). Se o funil já começa com um bloco Botões logo depois do
-  // Gatilho, funde os botões na própria resposta privada em vez de tentar
-  // mandar como uma 2ª mensagem depois (a Meta rejeita isso com "enviada
-  // fora do período permitido" — só abre janela de 24h quando a pessoa
-  // interage com um botão/quick reply, nunca antes disso).
-  let firstQuickReplyNode: { id: string; quickReplyOptions: unknown } | null = null;
-  if (rule.funnelId) {
-    const trigger = await db.query.instagramFunnelNodes.findFirst({
-      where: and(eq(instagramFunnelNodes.funnelId, rule.funnelId), eq(instagramFunnelNodes.type, "trigger")),
-    });
-    if (trigger) {
-      const firstEdge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
-      if (firstEdge) {
-        const targetNode = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, firstEdge.targetNodeId) });
-        if (targetNode?.type === "quick_reply") firstQuickReplyNode = targetNode;
-      }
-    }
-  }
+  // Desde a Fase 9.3 a regra não guarda mais texto próprio — a 1ª mensagem
+  // vem do bloco ligado direto no Gatilho do funil (só regra bem antiga,
+  // sem funil, ainda usa rule.message). E a resposta privada a comentário
+  // só permite UM bloco de conteúdo antes da pessoa responder (texto OU
+  // botões, nunca dois envios separados — a Meta rejeita o 2º com "enviada
+  // fora do período permitido"). Então: bloco Botões logo depois do
+  // Gatilho funde as opções na própria resposta privada; bloco Mensagem
+  // manda só o texto dele e cria uma sessão-sentinela esperando a próxima
+  // resposta (qualquer uma) pra liberar o resto.
+  const firstStep = rule.funnelId ? await resolveFirstFunnelStep(rule.funnelId) : null;
+  const isQuickReplyFirst = firstStep?.node.type === "quick_reply";
+  const isMessageFirst = firstStep?.node.type === "message" && !!firstStep.node.message;
+  const sentText = isQuickReplyFirst || isMessageFirst ? (firstStep!.node.message ?? "") : (rule.message ?? "Oi! 👋");
 
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
   try {
-    if (firstQuickReplyNode) {
-      const options = (firstQuickReplyNode.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
-      await sendPrivateReplyWithQuickReplies(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message, options);
+    if (isQuickReplyFirst) {
+      const options = (firstStep!.node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+      await sendPrivateReplyWithQuickReplies(connection.accessToken, igBusinessAccountId, comment.commentId, sentText, options);
     } else {
-      await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, rule.message);
+      await sendPrivateReply(connection.accessToken, igBusinessAccountId, comment.commentId, sentText);
     }
-    await logMessage(connection.organizationId, comment.fromId, "out", rule.message, comment.fromUsername, {
+    await logMessage(connection.organizationId, comment.fromId, "out", sentText, comment.fromUsername, {
       type: "comment",
       detail: rule.keyword,
     });
@@ -246,27 +239,20 @@ async function processComment(
   // Sem inserted = webhook reentregue pro mesmo comentário (já processado
   // antes) — não entra no funil de novo, senão duplicaria as mensagens.
   if (inserted) {
-    if (firstQuickReplyNode) {
+    if (isQuickReplyFirst) {
       // Os botões já saíram junto da resposta privada acima — só grava a
-      // sessão esperando o clique (mesmo padrão de advanceFunnel), sem
-      // reenviar a mensagem do bloco Botões nem seu texto (que fica sem uso
-      // nesse caso — só a mensagem da regra + os botões são mandados).
-      await db
-        .insert(instagramFunnelSessions)
-        .values({
-          organizationId: connection.organizationId,
-          igUserId: comment.fromId,
-          funnelId: rule.funnelId!,
-          currentNodeId: firstQuickReplyNode.id,
-          leadId: inserted.id,
-        })
-        .onConflictDoUpdate({
-          target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
-          set: { funnelId: rule.funnelId!, currentNodeId: firstQuickReplyNode.id, leadId: inserted.id, updatedAt: new Date().toISOString() },
-        });
-    } else {
-      await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, comment.fromId, inserted.id);
+      // sessão esperando o clique, sem reenviar a mensagem do bloco.
+      await upsertFunnelSession(connection.organizationId, comment.fromId, rule.funnelId!, firstStep!.node.id, inserted.id);
+    } else if (isMessageFirst) {
+      // Sentinela: sessão parada no próprio Gatilho — processIncomingMessage
+      // sabe reconstruir "1º bloco → aresta dele" quando a pessoa responder
+      // qualquer coisa, e só então libera o resto (janela de 24h só abre
+      // com uma resposta de verdade).
+      await upsertFunnelSession(connection.organizationId, comment.fromId, rule.funnelId!, firstStep!.triggerId, inserted.id);
     }
+    // Sem funil (regra antiga) ou 1º bloco de um tipo sem fusão suportada
+    // ainda (Condição/Seguir/Mensagem só com anexo): já mandou a única
+    // mensagem permitida antes da pessoa responder, nada mais a fazer aqui.
   }
 
   return !!inserted;
@@ -301,17 +287,35 @@ async function processStoryReply(
     });
   }
 
+  // Resposta a story já é uma DM de verdade da pessoa — a janela de 24h já
+  // abre normal, sem a restrição de "1 mensagem só" que a resposta privada a
+  // comentário tem. Então dá pra mandar o 1º bloco do funil direto (de
+  // qualquer tipo) e cascatear o resto sem esperar nada.
+  const firstStep = rule.funnelId ? await resolveFirstFunnelStep(rule.funnelId) : null;
+  const isQuickReplyFirst = firstStep?.node.type === "quick_reply";
+  const isMessageFirst = firstStep?.node.type === "message";
+
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
-  try {
-    await sendDirectMessage(connection.accessToken, igBusinessAccountId, reply.fromId, rule.message);
-    await logMessage(connection.organizationId, reply.fromId, "out", rule.message, null, {
-      type: "story_reply",
-      detail: rule.keyword,
-    });
-  } catch (err) {
-    status = "failed";
-    errorMessage = err instanceof Error ? err.message : String(err);
+  // Condição/Seguir como 1º bloco não manda nada aqui — deixa
+  // enterFunnelIfConfigured cuidar disso lá embaixo, sem duplicar envio.
+  if (isQuickReplyFirst || isMessageFirst || !firstStep) {
+    const sentText = firstStep?.node.message ?? rule.message ?? "Oi! 👋";
+    try {
+      if (isQuickReplyFirst) {
+        const options = (firstStep!.node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+        await sendDirectMessageWithQuickReplies(connection.accessToken, igBusinessAccountId, reply.fromId, sentText, options);
+      } else {
+        await sendDirectMessage(connection.accessToken, igBusinessAccountId, reply.fromId, sentText);
+      }
+      await logMessage(connection.organizationId, reply.fromId, "out", sentText, null, {
+        type: "story_reply",
+        detail: rule.keyword,
+      });
+    } catch (err) {
+      status = "failed";
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
   }
 
   // Reaproveita comment_id pra guardar o mid da mensagem — mesma proteção de
@@ -331,7 +335,14 @@ async function processStoryReply(
     .returning({ id: instagramFunnelLeads.id });
 
   if (inserted) {
-    await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, reply.fromId, inserted.id);
+    if (isQuickReplyFirst) {
+      await upsertFunnelSession(connection.organizationId, reply.fromId, rule.funnelId!, firstStep!.node.id, inserted.id);
+    } else if (isMessageFirst) {
+      const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, firstStep!.node.id) });
+      if (edge) await advanceFunnel(connection.accessToken, igBusinessAccountId, reply.fromId, rule.funnelId!, inserted.id, edge.targetNodeId);
+    } else if (firstStep) {
+      await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, reply.fromId, inserted.id);
+    }
   }
 
   return !!inserted;
@@ -354,6 +365,45 @@ async function enterFunnelIfConfigured(
   const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
   if (!edge) return;
   await advanceFunnel(connection.accessToken, igBusinessAccountId, igUserId, rule.funnelId, leadId, edge.targetNodeId);
+}
+
+type FunnelNodeRecord = typeof instagramFunnelNodes.$inferSelect;
+
+// Acha o 1º bloco de conteúdo ligado direto no Gatilho de um funil — desde
+// a Fase 9.3, é ele que define a "1ª mensagem" (a regra não guarda mais
+// texto próprio). `triggerId` vai junto pra permitir a sessão-sentinela
+// usada quando esse bloco não sabe esperar resposta sozinho (ver Fase 9.3
+// no docs/2026-09-28-gate-seguir-antes-design.md).
+async function resolveFirstFunnelStep(funnelId: string): Promise<{ node: FunnelNodeRecord; triggerId: string } | null> {
+  const trigger = await db.query.instagramFunnelNodes.findFirst({
+    where: and(eq(instagramFunnelNodes.funnelId, funnelId), eq(instagramFunnelNodes.type, "trigger")),
+  });
+  if (!trigger) return null;
+  const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, trigger.id) });
+  if (!edge) return null;
+  const node = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, edge.targetNodeId) });
+  if (!node) return null;
+  return { node, triggerId: trigger.id };
+}
+
+// Grava/atualiza a sessão "essa pessoa está parada nesse nó, esperando
+// resposta" — mesmo padrão usado por Condição/Botões/Seguir dentro de
+// advanceFunnel, mas também precisado fora dele (1º bloco fundido na
+// resposta privada de comentário, ver processComment).
+async function upsertFunnelSession(
+  organizationId: string,
+  igUserId: string,
+  funnelId: string,
+  currentNodeId: string,
+  leadId: string
+): Promise<void> {
+  await db
+    .insert(instagramFunnelSessions)
+    .values({ organizationId, igUserId, funnelId, currentNodeId, leadId })
+    .onConflictDoUpdate({
+      target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
+      set: { funnelId, currentNodeId, leadId, updatedAt: new Date().toISOString() },
+    });
 }
 
 // Fase 9 — gate "seguir antes de responder". Payload fixo do botão "Já
@@ -478,17 +528,32 @@ async function resolveEntryFollowGate(
   const rule = await db.query.instagramFunnelRules.findFirst({ where: eq(instagramFunnelRules.id, lead.ruleId) });
   if (!rule) return;
 
+  // A essa altura já existe uma conversa de Direct aberta (o próprio aviso
+  // do gate) — mesma situação de story reply, sem a restrição de "1
+  // mensagem só" da resposta privada a comentário.
+  const firstStep = rule.funnelId ? await resolveFirstFunnelStep(rule.funnelId) : null;
+  const isQuickReplyFirst = firstStep?.node.type === "quick_reply";
+  const isMessageFirst = firstStep?.node.type === "message";
+
   let status: "sent" | "failed" = "sent";
   let errorMessage: string | null = null;
-  try {
-    await sendDirectMessage(connection.accessToken, igBusinessAccountId, igUserId, rule.message);
-    await logMessage(connection.organizationId, igUserId, "out", rule.message, lead.igUsername, {
-      type: rule.triggerType === "story_reply" ? "story_reply" : "comment",
-      detail: rule.keyword,
-    });
-  } catch (err) {
-    status = "failed";
-    errorMessage = err instanceof Error ? err.message : String(err);
+  if (isQuickReplyFirst || isMessageFirst || !firstStep) {
+    const sentText = firstStep?.node.message ?? rule.message ?? "Oi! 👋";
+    try {
+      if (isQuickReplyFirst) {
+        const options = (firstStep!.node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+        await sendDirectMessageWithQuickReplies(connection.accessToken, igBusinessAccountId, igUserId, sentText, options);
+      } else {
+        await sendDirectMessage(connection.accessToken, igBusinessAccountId, igUserId, sentText);
+      }
+      await logMessage(connection.organizationId, igUserId, "out", sentText, lead.igUsername, {
+        type: rule.triggerType === "story_reply" ? "story_reply" : "comment",
+        detail: rule.keyword,
+      });
+    } catch (err) {
+      status = "failed";
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
   }
 
   if (rule.triggerType === "comment" && rule.publicReply) {
@@ -501,7 +566,14 @@ async function resolveEntryFollowGate(
 
   await db.update(instagramFunnelLeads).set({ status, errorMessage }).where(eq(instagramFunnelLeads.id, lead.id));
 
-  await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, igUserId, lead.id);
+  if (isQuickReplyFirst) {
+    await upsertFunnelSession(connection.organizationId, igUserId, rule.funnelId!, firstStep!.node.id, lead.id);
+  } else if (isMessageFirst) {
+    const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, firstStep!.node.id) });
+    if (edge) await advanceFunnel(connection.accessToken, igBusinessAccountId, igUserId, rule.funnelId!, lead.id, edge.targetNodeId);
+  } else if (firstStep) {
+    await enterFunnelIfConfigured(rule, connection, igBusinessAccountId, igUserId, lead.id);
+  }
 }
 
 async function processIncomingMessage(
@@ -524,6 +596,22 @@ async function processIncomingMessage(
   // Sessão parada num bloco Seguir só resolve pelo clique no botão (postback,
   // ver resolveFollowGate) — texto solto não conta como "já segui".
   if (node?.type === "follow_gate") return;
+
+  if (node?.type === "trigger") {
+    // Sentinela (ver processComment/resolveEntryFollowGate): o 1º bloco do
+    // funil (Mensagem, ligado direto no Gatilho) já foi mandado junto da
+    // resposta privada do comentário — isso aqui é a 1ª resposta de
+    // verdade da pessoa, que abre a janela de 24h. Reconstrói "1º bloco →
+    // aresta dele" e segue a partir daí.
+    await db.delete(instagramFunnelSessions).where(eq(instagramFunnelSessions.id, session.id));
+    const firstEdge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, node.id) });
+    if (!firstEdge) return;
+    const nextEdge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, firstEdge.targetNodeId) });
+    if (!nextEdge) return;
+    await advanceFunnel(connection.accessToken, igBusinessAccountId, senderId, session.funnelId, session.leadId, nextEdge.targetNodeId);
+    return;
+  }
+
   // Sempre apaga a sessão antes de seguir — se não achar nó/aresta, o funil
   // só termina aqui, não fica uma sessão órfã esperando pra sempre.
   await db.delete(instagramFunnelSessions).where(eq(instagramFunnelSessions.id, session.id));
@@ -635,13 +723,7 @@ async function advanceFunnel(
   }
 
   if (node.type === "condition") {
-    await db
-      .insert(instagramFunnelSessions)
-      .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
-      .onConflictDoUpdate({
-        target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
-        set: { funnelId, currentNodeId: node.id, leadId, updatedAt: new Date().toISOString() },
-      });
+    await upsertFunnelSession(funnel.organizationId, igUserId, funnelId, node.id, leadId);
     return;
   }
 
@@ -657,13 +739,7 @@ async function advanceFunnel(
       console.error("[instagram-webhook] falha ao enviar aviso de seguir do funil:", err);
       return;
     }
-    await db
-      .insert(instagramFunnelSessions)
-      .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
-      .onConflictDoUpdate({
-        target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
-        set: { funnelId, currentNodeId: node.id, leadId, updatedAt: new Date().toISOString() },
-      });
+    await upsertFunnelSession(funnel.organizationId, igUserId, funnelId, node.id, leadId);
     return;
   }
 
@@ -677,13 +753,7 @@ async function advanceFunnel(
       console.error("[instagram-webhook] falha ao enviar botões do funil:", err);
       return; // sem a mensagem sair, não faz sentido ficar esperando clique
     }
-    await db
-      .insert(instagramFunnelSessions)
-      .values({ organizationId: funnel.organizationId, igUserId, funnelId, currentNodeId: node.id, leadId })
-      .onConflictDoUpdate({
-        target: [instagramFunnelSessions.organizationId, instagramFunnelSessions.igUserId],
-        set: { funnelId, currentNodeId: node.id, leadId, updatedAt: new Date().toISOString() },
-      });
+    await upsertFunnelSession(funnel.organizationId, igUserId, funnelId, node.id, leadId);
   }
 }
 

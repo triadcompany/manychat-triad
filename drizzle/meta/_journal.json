@@ -43,6 +43,13 @@
       "when": 1790637257155,
       "tag": "0005_mushy_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790640583832,
+      "tag": "0006_normal_wong",
+      "breakpoints": true
     }
   ]
 }

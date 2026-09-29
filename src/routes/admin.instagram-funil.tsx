@@ -101,6 +101,7 @@ function RulesTab() {
   const [editingRule, setEditingRule] = useState<FunnelRuleRow | null>(null);
 
   const { data: rules = [], isLoading } = useQuery({ queryKey: ["instagram-funnel-rules"], queryFn: fetchFunnelRules });
+  const { data: funnels = [] } = useQuery({ queryKey: ["instagram-funnels"], queryFn: fetchFunnels });
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) => toggleFunnelRule(id, active),
@@ -164,7 +165,11 @@ function RulesTab() {
                     </a>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground truncate mt-1">{r.message}</p>
+                <p className="text-xs text-muted-foreground truncate mt-1">
+                  {r.funnel_id
+                    ? `Funil: ${funnels.find((f) => f.id === r.funnel_id)?.name ?? "—"}`
+                    : (r.message ?? "—")}
+                </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <Switch checked={r.active} onCheckedChange={(v) => toggleMutation.mutate({ id: r.id, active: v })} />
@@ -193,9 +198,8 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
   const [triggerType, setTriggerType] = useState<"comment" | "story_reply">("comment");
   const [selectedPost, setSelectedPost] = useState<InstagramPostRow | null>(null);
   const [keyword, setKeyword] = useState("");
-  const [message, setMessage] = useState("");
   const [publicReply, setPublicReply] = useState("");
-  const [funnelId, setFunnelId] = useState<string>("none");
+  const [funnelId, setFunnelId] = useState<string>("");
   const [requireFollow, setRequireFollow] = useState(false);
 
   const { data: posts = [], isLoading, isError, error } = useQuery({ queryKey: ["instagram-recent-posts"], queryFn: fetchRecentInstagramPosts });
@@ -211,9 +215,8 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
         post_thumbnail_url: isComment ? selectedPost!.thumbnail_url : null,
         post_permalink: isComment ? selectedPost!.permalink : null,
         keyword: keyword.trim(),
-        message: message.trim(),
         public_reply: isComment ? publicReply.trim() || null : null,
-        funnel_id: funnelId === "none" ? null : funnelId,
+        funnel_id: funnelId,
         require_follow: requireFollow,
       }),
     onSuccess: () => {
@@ -289,10 +292,6 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
             Bate se {isComment ? "o comentário" : "a resposta ao story"} contiver essa palavra (sem diferenciar maiúsculas).
           </p>
         </div>
-        <div className="space-y-1.5">
-          <Label>Mensagem do DM</Label>
-          <Textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Oi! Vi que você comentou..." className="min-h-[90px]" />
-        </div>
         {isComment && (
           <div className="space-y-1.5">
             <Label>Resposta pública no comentário (opcional)</Label>
@@ -305,21 +304,31 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
           </div>
         )}
         <div className="space-y-1.5">
-          <Label>Funil (opcional)</Label>
-          <Select value={funnelId} onValueChange={setFunnelId}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Nenhum — só a mensagem acima</SelectItem>
-              {funnels.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <p className="text-[11px] text-muted-foreground">Continua a conversa no Direct depois dessa 1ª mensagem.</p>
+          <Label>Funil</Label>
+          {funnels.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Você ainda não tem nenhum funil — crie um na aba <strong>Funis</strong> primeiro (é ele que define a
+              1ª mensagem e o resto da conversa).
+            </p>
+          ) : (
+            <>
+              <Select value={funnelId} onValueChange={setFunnelId}>
+                <SelectTrigger><SelectValue placeholder="Escolha um funil" /></SelectTrigger>
+                <SelectContent>
+                  {funnels.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                A mensagem e o resto da conversa vêm do bloco Gatilho desse funil pra frente.
+              </p>
+            </>
+          )}
         </div>
         <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
           <div className="space-y-0.5">
             <Label>Exigir seguir antes de responder</Label>
             <p className="text-[11px] text-muted-foreground">
-              Se a pessoa não seguir a conta, manda um aviso pedindo pra seguir em vez da mensagem acima.
+              Se a pessoa não seguir a conta, manda um aviso pedindo pra seguir em vez da 1ª mensagem do funil.
             </p>
           </div>
           <Switch checked={requireFollow} onCheckedChange={setRequireFollow} />
@@ -328,7 +337,7 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
       <DialogFooter>
         <Button
           onClick={() => createMutation.mutate()}
-          disabled={(isComment && !selectedPost) || !keyword.trim() || !message.trim() || createMutation.isPending}
+          disabled={(isComment && !selectedPost) || !keyword.trim() || !funnelId || createMutation.isPending}
         >
           {createMutation.isPending ? "Criando..." : "Criar regra"}
         </Button>
@@ -342,22 +351,24 @@ function NewRuleDialog({ onCreated }: { onCreated: () => void }) {
 // seletor de posts aqui; nesse caso é mais simples excluir e criar de novo).
 function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () => void }) {
   const queryClient = useQueryClient();
+  const isLegacy = !rule.funnel_id; // regra antiga, de antes do funil virar obrigatório — ainda usa mensagem própria
   const [keyword, setKeyword] = useState(rule.keyword);
-  const [message, setMessage] = useState(rule.message);
+  const [message, setMessage] = useState(rule.message ?? "");
   const [publicReply, setPublicReply] = useState(rule.public_reply ?? "");
-  const [funnelId, setFunnelId] = useState<string>(rule.funnel_id ?? "none");
+  const [funnelId, setFunnelId] = useState<string>(rule.funnel_id ?? "");
   const [requireFollow, setRequireFollow] = useState(rule.require_follow);
 
   const { data: funnels = [] } = useQuery({ queryKey: ["instagram-funnels"], queryFn: fetchFunnels });
+  const usingFunnel = funnelId !== "";
 
   const updateMutation = useMutation({
     mutationFn: () =>
       updateFunnelRule({
         id: rule.id,
         keyword: keyword.trim(),
-        message: message.trim(),
+        message: usingFunnel ? null : message.trim(),
         public_reply: publicReply.trim() || null,
-        funnel_id: funnelId === "none" ? null : funnelId,
+        funnel_id: usingFunnel ? funnelId : null,
         require_follow: requireFollow,
       }),
     onSuccess: () => {
@@ -405,30 +416,35 @@ function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () =>
           </p>
         </div>
         <div className="space-y-1.5">
-          <Label>Mensagem do DM</Label>
-          <Textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Oi! Vi que você comentou..." className="min-h-[90px]" />
+          <Label>Funil</Label>
+          <Select value={funnelId || "none"} onValueChange={(v) => setFunnelId(v === "none" ? "" : v)}>
+            <SelectTrigger><SelectValue placeholder="Escolha um funil" /></SelectTrigger>
+            <SelectContent>
+              {isLegacy && <SelectItem value="none">Nenhum — usa a mensagem antiga abaixo</SelectItem>}
+              {funnels.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] text-muted-foreground">
+            A mensagem e o resto da conversa vêm do bloco Gatilho desse funil pra frente.
+          </p>
         </div>
+        {!usingFunnel && (
+          <div className="space-y-1.5">
+            <Label>Mensagem do DM (modo antigo, sem funil)</Label>
+            <Textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Oi! Vi que você comentou..." className="min-h-[90px]" />
+          </div>
+        )}
         {rule.trigger_type === "comment" && (
           <div className="space-y-1.5">
             <Label>Resposta pública no comentário (opcional)</Label>
             <Input value={publicReply} onChange={(e) => setPublicReply(e.target.value)} placeholder="Ex: Te mandei no Direct!" />
           </div>
         )}
-        <div className="space-y-1.5">
-          <Label>Funil (opcional)</Label>
-          <Select value={funnelId} onValueChange={setFunnelId}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Nenhum — só a mensagem acima</SelectItem>
-              {funnels.map((f) => <SelectItem key={f.id} value={f.id}>{f.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
         <div className="flex items-center justify-between gap-4 rounded-md border border-border p-3">
           <div className="space-y-0.5">
             <Label>Exigir seguir antes de responder</Label>
             <p className="text-[11px] text-muted-foreground">
-              Se a pessoa não seguir a conta, manda um aviso pedindo pra seguir em vez da mensagem acima.
+              Se a pessoa não seguir a conta, manda um aviso pedindo pra seguir em vez da 1ª mensagem.
             </p>
           </div>
           <Switch checked={requireFollow} onCheckedChange={setRequireFollow} />
@@ -437,7 +453,7 @@ function EditRuleDialog({ rule, onSaved }: { rule: FunnelRuleRow; onSaved: () =>
       <DialogFooter>
         <Button
           onClick={() => updateMutation.mutate()}
-          disabled={!keyword.trim() || !message.trim() || updateMutation.isPending}
+          disabled={!keyword.trim() || (!usingFunnel && !message.trim()) || updateMutation.isPending}
         >
           {updateMutation.isPending ? "Salvando..." : "Salvar"}
         </Button>

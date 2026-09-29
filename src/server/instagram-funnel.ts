@@ -113,7 +113,7 @@ export interface FunnelRuleRow {
   post_thumbnail_url: string | null;
   post_permalink: string | null;
   keyword: string;
-  message: string;
+  message: string | null;
   public_reply: string | null;
   funnel_id: string | null;
   active: boolean;
@@ -148,15 +148,17 @@ export async function fetchFunnelRules(): Promise<FunnelRuleRow[]> {
   return _fetchFunnelRules();
 }
 
+// Regra nova sempre exige um funil — a 1ª mensagem e o resto da conversa
+// vêm do bloco Gatilho dele pra frente. `message` só existe mais pra regra
+// antiga (criada antes dessa mudança, sem funil vinculado) via updateRuleSchema.
 const createRuleSchema = z.object({
   trigger_type: z.enum(["comment", "story_reply"]),
   post_id: z.string().nullable().optional(),
   post_thumbnail_url: z.string().nullable().optional(),
   post_permalink: z.string().nullable().optional(),
   keyword: z.string().min(1),
-  message: z.string().min(1),
   public_reply: z.string().nullable().optional(),
-  funnel_id: z.string().nullable().optional(),
+  funnel_id: z.string().min(1),
   require_follow: z.boolean().optional(),
 }).refine((data) => data.trigger_type !== "comment" || !!data.post_id, {
   message: "post_id é obrigatório pra regra de comentário.",
@@ -175,10 +177,10 @@ const _createFunnelRule = createServerFn({ method: "POST" })
       postThumbnailUrl: isComment ? (data.post_thumbnail_url ?? null) : null,
       postPermalink: isComment ? (data.post_permalink ?? null) : null,
       keyword: data.keyword.trim(),
-      message: data.message,
+      message: null,
       // Resposta pública não existe pra story — só faz sentido em comentário.
       publicReply: isComment ? data.public_reply?.trim() || null : null,
-      funnelId: data.funnel_id ?? null,
+      funnelId: data.funnel_id,
       requireFollow: data.require_follow ?? false,
     });
   });
@@ -189,9 +191,8 @@ export async function createFunnelRule(payload: {
   post_thumbnail_url?: string | null;
   post_permalink?: string | null;
   keyword: string;
-  message: string;
   public_reply?: string | null;
-  funnel_id?: string | null;
+  funnel_id: string;
   require_follow?: boolean;
 }): Promise<void> {
   await _createFunnelRule({ data: payload });
@@ -200,7 +201,9 @@ export async function createFunnelRule(payload: {
 const updateRuleSchema = z.object({
   id: z.string(),
   keyword: z.string().min(1),
-  message: z.string().min(1),
+  // Só enviado (não-undefined) pra regra antiga, sem funil — regra com
+  // funil não tem mais campo de mensagem própria pra editar.
+  message: z.string().nullable().optional(),
   public_reply: z.string().nullable().optional(),
   funnel_id: z.string().nullable().optional(),
   require_follow: z.boolean().optional(),
@@ -218,7 +221,7 @@ const _updateFunnelRule = createServerFn({ method: "POST" })
       .update(instagramFunnelRules)
       .set({
         keyword: data.keyword.trim(),
-        message: data.message,
+        ...(data.message !== undefined ? { message: data.message?.trim() || null } : {}),
         // Resposta pública não existe pra story, mesmo que venha preenchida.
         publicReply: existing.triggerType === "comment" ? data.public_reply?.trim() || null : null,
         funnelId: data.funnel_id ?? null,
@@ -230,7 +233,7 @@ const _updateFunnelRule = createServerFn({ method: "POST" })
 export async function updateFunnelRule(payload: {
   id: string;
   keyword: string;
-  message: string;
+  message?: string | null;
   public_reply?: string | null;
   funnel_id?: string | null;
   require_follow?: boolean;

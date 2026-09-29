@@ -99,12 +99,16 @@ export const instagramFunnelRules = pgTable("instagram_funnel_rules", {
   postThumbnailUrl: text("post_thumbnail_url"),
   postPermalink: text("post_permalink"),
   keyword: text("keyword").notNull(), // comparação: contém, case-insensitive
-  message: text("message").notNull(),
+  // Nulo pra regra nova (Fase 9.3) — a 1ª mensagem passou a vir do bloco
+  // Gatilho do funil. Só preenchido em regra antiga, criada antes dessa
+  // mudança, sem funil vinculado (funnelId nulo).
+  message: text("message"),
   // Opcional — resposta pública embaixo do comentário, além do DM privado.
   // Exige a permissão instagram_business_manage_comments.
   publicReply: text("public_reply"),
-  // Opcional — funil visual (instagram_funnels) que continua depois da 1ª
-  // mensagem. set null: apagar o funil não apaga a regra, só desconecta.
+  // Fase 9.3: obrigatório pra regra nova (a UI de criar exige escolher um),
+  // mas a coluna continua nullable — regra antiga sem funil ainda funciona
+  // via `message`. set null: apagar o funil não apaga a regra, só desconecta.
   funnelId: uuid("funnel_id").references((): AnyPgColumn => instagramFunnels.id, { onDelete: "set null" }),
   active: boolean("active").notNull().default(true),
   // Fase 9 — exige seguir a conta antes de mandar a mensagem da regra;

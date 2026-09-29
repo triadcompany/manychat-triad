@@ -195,8 +195,41 @@ abre). Então: se o bloco ligado direto no Gatilho for **Botões**,
 direto nesse nó — sem tentar mandar a mensagem do bloco Botões separada
 (que ficaria sem uso nesse caso).
 
-**Limitação que continua**: só o caso "Botões logo depois do Gatilho"
-tem essa fusão. Um funil de comentário que comece com Mensagem,
-Condição ou Seguir direto no Gatilho ainda esbarra na mesma regra (só
-uma mensagem antes da pessoa responder) — não tratado por não ter sido
-pedido ainda.
+**Limitação que continua**: só os casos "Botões" e "Mensagem" logo
+depois do Gatilho têm tratamento especial (ver Adendo 3). Um funil de
+comentário que comece com Condição ou Seguir direto no Gatilho ainda
+esbarra na regra de 1 mensagem só — não tratado por ser configuração
+rara (Condição não tem texto próprio pra mandar; Seguir manda um button
+template, que também poderia ser fundido na resposta privada, mas isso
+ficou de fora por enquanto).
+
+## Adendo 3 — regra não guarda mais mensagem própria, funil é obrigatório
+
+Pedido do usuário: a regra não deveria ter campo de "Mensagem do DM"
+separado — só escolher um funil, e o bloco Gatilho dele pra frente é
+que define tudo (1ª mensagem inclusa).
+
+**Mudança**: `instagram_funnel_rules.message` virou nullable (coluna
+continua existindo só pra regra antiga, criada antes dessa mudança, sem
+funil vinculado — grandfathered). Tela de criar regra não tem mais
+campo de mensagem, só a escolha do funil (obrigatória — se a
+organização não tiver nenhum funil ainda, pede pra criar um na aba
+Funis primeiro). Tela de editar só mostra o campo de mensagem antiga se
+a regra ainda não tiver funil.
+
+**Motor**: `resolveFirstFunnelStep(funnelId)` acha o bloco ligado direto
+no Gatilho. `processComment`/`processStoryReply`/`resolveEntryFollowGate`
+usam esse 1º bloco como a "1ª mensagem":
+- **Botões**: funde na resposta privada/DM (mesma técnica do Adendo 2).
+- **Mensagem**: manda só o texto dela. Pra regra de **comentário**
+  (restrição de 1 mensagem só), cria uma sessão-sentinela parada no
+  próprio nó **Gatilho** — `processIncomingMessage` sabe reconhecer esse
+  caso e, na próxima resposta de qualquer tipo da pessoa (janela de 24h
+  já aberta a essa altura), reconstrói "1º bloco → aresta dele" e segue
+  o funil a partir daí. Pra **resposta a story** (sem essa restrição) e
+  pra **gate de seguir resolvido** (conversa já aberta), cascateia
+  direto sem sentinela.
+- **Condição/Seguir/Mensagem só com anexo (sem texto)** como 1º bloco:
+  sem tratamento especial — cai no caminho antigo (`enterFunnelIfConfigured`),
+  que pra regra de comentário provavelmente esbarra na mesma restrição
+  de 1 mensagem (ver limitação acima).
