@@ -360,13 +360,32 @@ function FunnelEditorPage() {
   );
 }
 
+// Janela de mensagem da Meta: só dá pra mandar DM comum (fora de resposta
+// privada a comentário) pra quem falou com a conta nas últimas 24h — depois
+// disso a conversa "esfria" e a Meta rejeita com 403, mesmo já tendo
+// histórico antigo. Ter uma linha em instagram_conversations não basta.
+const WINDOW_HOURS = 24;
+
+function isWithinWindow(lastMessageAt: string): boolean {
+  return Date.now() - new Date(lastMessageAt).getTime() < WINDOW_HOURS * 60 * 60 * 1000;
+}
+
+function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffHours = diffMs / (60 * 60 * 1000);
+  if (diffHours < 1) return "há poucos minutos";
+  if (diffHours < 24) return `há ${Math.floor(diffHours)}h`;
+  return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 // Manda o funil de verdade pra um contato que já tem conversa aberta (janela
 // de 24h) — sem precisar de um comentário/story real. Ver runFunnelTest em
 // instagram-webhook.ts.
 function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: () => void }) {
   const [igUserId, setIgUserId] = useState("");
 
-  const { data: conversations = [], isLoading } = useQuery({ queryKey: ["instagram-conversations"], queryFn: fetchConversations });
+  const { data: allConversations = [], isLoading } = useQuery({ queryKey: ["instagram-conversations"], queryFn: fetchConversations });
+  const conversations = allConversations.filter((c) => isWithinWindow(c.last_message_at));
 
   const testMutation = useMutation({
     mutationFn: () => testFunnel(funnelId, igUserId),
@@ -391,9 +410,9 @@ function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: ()
           <p className="text-sm text-muted-foreground">Carregando conversas...</p>
         ) : conversations.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhuma conversa ainda pra testar. Precisa de um contato que já tenha trocado Direct com a conta
-            conectada (a janela de 24h precisa estar aberta) — manda um Direct qualquer pra sua própria conta e ele
-            aparece aqui.
+            {allConversations.length === 0
+              ? "Nenhuma conversa ainda pra testar. Precisa de um contato que tenha trocado Direct com a conta conectada nas últimas 24h — manda um Direct qualquer pra sua própria conta e ele aparece aqui."
+              : "As conversas existentes já passaram das 24h — a Meta fecha a janela de envio depois disso, mesmo já tendo histórico. Manda uma mensagem nova (pra sua própria conta, por exemplo) e teste de novo."}
           </p>
         ) : (
           <>
@@ -404,14 +423,15 @@ function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: ()
                 <SelectContent>
                   {conversations.map((c) => (
                     <SelectItem key={c.ig_user_id} value={c.ig_user_id}>
-                      {c.ig_username ? `@${c.ig_username}` : c.ig_user_id}
+                      {c.ig_username ? `@${c.ig_username}` : c.ig_user_id} — {formatRelativeTime(c.last_message_at)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Manda o funil de verdade a partir do bloco Gatilho pra esse contato — não cria lead na aba Leads.
+              Manda o funil de verdade a partir do bloco Gatilho pra esse contato — não cria lead na aba Leads. Só
+              aparecem contatos com mensagem nas últimas 24h (janela de envio da Meta).
             </p>
           </>
         )}
