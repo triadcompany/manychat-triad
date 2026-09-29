@@ -394,6 +394,10 @@ export interface FunnelNodeRow {
   condition_keywords: { id: string; keyword: string }[];
   condition_use_ai: boolean;
   quick_reply_options: { id: string; label: string }[];
+  // Só type='follow_gate' — texto da 1ª vez reaproveita `message` acima.
+  follow_gate_retry_message: string | null;
+  follow_gate_confirm_label: string | null;
+  follow_gate_profile_label: string | null;
 }
 
 export interface FunnelEdgeRow {
@@ -428,6 +432,9 @@ const _fetchFunnelGraph = createServerFn({ method: "GET" })
         condition_keywords: (n.conditionKeywords as { id: string; keyword: string }[] | null) ?? [],
         condition_use_ai: n.conditionUseAi,
         quick_reply_options: (n.quickReplyOptions as { id: string; label: string }[] | null) ?? [],
+        follow_gate_retry_message: (n.followGateConfig as { retry?: string } | null)?.retry ?? null,
+        follow_gate_confirm_label: (n.followGateConfig as { confirmLabel?: string } | null)?.confirmLabel ?? null,
+        follow_gate_profile_label: (n.followGateConfig as { profileLabel?: string } | null)?.profileLabel ?? null,
       })),
       edges: edgeRows.map((e) => ({ id: e.id, source_node_id: e.sourceNodeId, source_handle: e.sourceHandle, target_node_id: e.targetNodeId })),
     };
@@ -454,6 +461,9 @@ const saveGraphSchema = z.object({
       // Limites da API de quick_replies da Meta: até 13 botões, rótulo até
       // 20 caracteres — mesmo validado no editor, reforçado aqui.
       quick_reply_options: z.array(z.object({ id: z.string(), label: z.string().max(20) })).max(13).optional(),
+      follow_gate_retry_message: z.string().nullable().optional(),
+      follow_gate_confirm_label: z.string().max(20).nullable().optional(),
+      follow_gate_profile_label: z.string().max(20).nullable().optional(),
     })
   ),
   edges: z.array(
@@ -490,13 +500,21 @@ const _saveFunnelGraph = createServerFn({ method: "POST" })
             type: n.type,
             positionX: Math.round(n.position_x),
             positionY: Math.round(n.position_y),
-            message: n.type === "message" || n.type === "quick_reply" ? (n.message ?? null) : null,
+            message: n.type === "message" || n.type === "quick_reply" || n.type === "follow_gate" ? (n.message ?? null) : null,
             fileBase64: n.type === "message" ? (n.file_base64 ?? null) : null,
             fileMimetype: n.type === "message" ? (n.file_mimetype ?? null) : null,
             fileFilename: n.type === "message" ? (n.file_filename ?? null) : null,
             conditionKeywords: n.type === "condition" ? (n.condition_keywords ?? []) : [],
             conditionUseAi: n.type === "condition" ? (n.condition_use_ai ?? false) : false,
             quickReplyOptions: n.type === "quick_reply" ? (n.quick_reply_options ?? []) : [],
+            followGateConfig:
+              n.type === "follow_gate"
+                ? {
+                    retry: n.follow_gate_retry_message || undefined,
+                    confirmLabel: n.follow_gate_confirm_label || undefined,
+                    profileLabel: n.follow_gate_profile_label || undefined,
+                  }
+                : {},
           }))
         );
       }

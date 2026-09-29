@@ -1,0 +1,1 @@
+ALTER TABLE "instagram_funnel_nodes" ADD COLUMN "follow_gate_config" jsonb DEFAULT '{}'::jsonb NOT NULL;

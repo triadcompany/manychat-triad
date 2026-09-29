@@ -53,6 +53,12 @@ interface QuickReplyData extends Record<string, unknown> {
   message: string;
   options: { id: string; label: string }[];
 }
+interface FollowGateData extends Record<string, unknown> {
+  message: string;
+  retry_message: string;
+  confirm_label: string;
+  profile_label: string;
+}
 
 function TriggerNodeCard() {
   return (
@@ -139,14 +145,16 @@ function QuickReplyNodeCard({ data }: NodeProps<Node<QuickReplyData>>) {
   );
 }
 
-function FollowGateNodeCard() {
+function FollowGateNodeCard({ data }: NodeProps<Node<FollowGateData>>) {
   return (
-    <div className="rounded-xl border-2 border-rose-500/60 bg-rose-500/10 px-4 py-3 min-w-[200px] shadow-sm">
+    <div className="rounded-xl border-2 border-rose-500/60 bg-rose-500/10 px-4 py-3 min-w-[200px] max-w-[260px] shadow-sm">
       <Handle type="target" position={Position.Left} className="!bg-muted-foreground !w-3 !h-3" />
       <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400 font-semibold text-[10px] uppercase tracking-wide">
         <UserPlus className="h-3.5 w-3.5" /> Seguir
       </div>
-      <p className="text-sm mt-1 text-foreground/80">Se não seguir, manda o aviso e espera clicar em "Já segui".</p>
+      <p className="text-sm mt-1 line-clamp-3 whitespace-pre-wrap">
+        {data.message || 'Falta só um passo: me segue aqui no perfil 👀 (texto padrão, clique 2x pra mudar)'}
+      </p>
       <Handle type="source" position={Position.Right} className="!bg-rose-500 !w-3 !h-3" />
     </div>
   );
@@ -189,7 +197,14 @@ function FunnelEditorPage() {
               ? { keywords: n.condition_keywords, use_ai: n.condition_use_ai }
               : n.type === "quick_reply"
                 ? { message: n.message ?? "", options: n.quick_reply_options }
-                : {},
+                : n.type === "follow_gate"
+                  ? {
+                      message: n.message ?? "",
+                      retry_message: n.follow_gate_retry_message ?? "",
+                      confirm_label: n.follow_gate_confirm_label ?? "",
+                      profile_label: n.follow_gate_profile_label ?? "",
+                    }
+                  : {},
       }))
     );
     setEdges(graph.edges.map((e) => ({ id: e.id, source: e.source_node_id, sourceHandle: e.source_handle, target: e.target_node_id })));
@@ -213,7 +228,7 @@ function FunnelEditorPage() {
           ? { keywords: [], use_ai: false }
           : type === "quick_reply"
             ? { message: "", options: [] }
-            : {};
+            : { message: "", retry_message: "", confirm_label: "", profile_label: "" };
     setNodes((nds) => [...nds, { id, type, position: { x: 380 + offset, y: 120 + offset }, deletable: true, data }]);
   };
 
@@ -231,13 +246,18 @@ function FunnelEditorPage() {
               ? ((n.data as MessageData).message ?? null)
               : n.type === "quick_reply"
                 ? ((n.data as QuickReplyData).message ?? null)
-                : null,
+                : n.type === "follow_gate"
+                  ? ((n.data as FollowGateData).message ?? null)
+                  : null,
           file_base64: n.type === "message" ? (n.data as MessageData).file_base64 : null,
           file_mimetype: n.type === "message" ? (n.data as MessageData).file_mimetype : null,
           file_filename: n.type === "message" ? (n.data as MessageData).file_filename : null,
           condition_keywords: n.type === "condition" ? (n.data as ConditionData).keywords : [],
           condition_use_ai: n.type === "condition" ? (n.data as ConditionData).use_ai : false,
           quick_reply_options: n.type === "quick_reply" ? (n.data as QuickReplyData).options : [],
+          follow_gate_retry_message: n.type === "follow_gate" ? (n.data as FollowGateData).retry_message || null : null,
+          follow_gate_confirm_label: n.type === "follow_gate" ? (n.data as FollowGateData).confirm_label || null : null,
+          follow_gate_profile_label: n.type === "follow_gate" ? (n.data as FollowGateData).profile_label || null : null,
         })),
         edges.map((e) => ({ source_node_id: e.source, source_handle: e.sourceHandle ?? null, target_node_id: e.target }))
       ),
@@ -282,7 +302,7 @@ function FunnelEditorPage() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          onNodeDoubleClick={(_, node) => { if (node.type !== "trigger" && node.type !== "follow_gate") setEditingNode(node); }}
+          onNodeDoubleClick={(_, node) => { if (node.type !== "trigger") setEditingNode(node); }}
           nodeTypes={nodeTypes}
           fitView
           colorMode="system"
@@ -314,6 +334,15 @@ function FunnelEditorPage() {
         {editingNode?.type === "quick_reply" && (
           <QuickReplyNodeEditor
             data={editingNode.data as QuickReplyData}
+            onSave={(patch) => {
+              setNodes((nds) => nds.map((n) => (n.id === editingNode.id ? { ...n, data: { ...n.data, ...patch } } : n)));
+              setEditingNode(null);
+            }}
+          />
+        )}
+        {editingNode?.type === "follow_gate" && (
+          <FollowGateNodeEditor
+            data={editingNode.data as FollowGateData}
             onSave={(patch) => {
               setNodes((nds) => nds.map((n) => (n.id === editingNode.id ? { ...n, data: { ...n.data, ...patch } } : n)));
               setEditingNode(null);
@@ -584,6 +613,68 @@ function QuickReplyNodeEditor({ data, onSave }: { data: QuickReplyData; onSave: 
         <Button
           disabled={!message.trim()}
           onClick={() => onSave({ message, options: options.filter((o) => o.label.trim()) })}
+        >
+          Salvar bloco
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  );
+}
+
+const GATE_DEFAULT_FIRST =
+  'Falta só um passo: me segue aqui no perfil 👀\n\nAssim que seguir, clica em "Já segui" que eu libero sua mensagem na hora 👇';
+const GATE_DEFAULT_RETRY = "Ainda não te encontrei seguindo 👀 segue rapidinho que eu libero na hora!";
+
+type FollowGatePatch = { message: string; retry_message: string; confirm_label: string; profile_label: string };
+
+function FollowGateNodeEditor({ data, onSave }: { data: FollowGateData; onSave: (patch: FollowGatePatch) => void }) {
+  const [message, setMessage] = useState(data.message);
+  const [retryMessage, setRetryMessage] = useState(data.retry_message);
+  const [confirmLabel, setConfirmLabel] = useState(data.confirm_label);
+  const [profileLabel, setProfileLabel] = useState(data.profile_label);
+
+  return (
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Seguir</DialogTitle>
+      </DialogHeader>
+      <div className="py-2 space-y-4">
+        <div className="space-y-1.5">
+          <Label>Texto (1ª vez)</Label>
+          <Textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder={GATE_DEFAULT_FIRST}
+            className="min-h-[90px]"
+            autoFocus
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Texto (se clicar em "Já segui" sem ter seguido)</Label>
+          <Textarea
+            value={retryMessage}
+            onChange={(e) => setRetryMessage(e.target.value)}
+            placeholder={GATE_DEFAULT_RETRY}
+            className="min-h-[70px]"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label>Botão "Ver perfil"</Label>
+            <Input value={profileLabel} onChange={(e) => setProfileLabel(e.target.value)} placeholder="Ver perfil 👀" maxLength={20} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Botão "Já segui"</Label>
+            <Input value={confirmLabel} onChange={(e) => setConfirmLabel(e.target.value)} placeholder="Já segui 💙" maxLength={20} />
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">Deixe em branco pra usar o texto/rótulo padrão do sistema.</p>
+      </div>
+      <DialogFooter>
+        <Button
+          onClick={() =>
+            onSave({ message, retry_message: retryMessage, confirm_label: confirmLabel, profile_label: profileLabel })
+          }
         >
           Salvar bloco
         </Button>

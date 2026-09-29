@@ -484,11 +484,37 @@ export const runFunnelTest = createServerOnlyFn(async (
 });
 
 // Fase 9 — gate "seguir antes de responder". Payload fixo do botão "Já
-// segui" (postback, chega via webhook messaging_postbacks).
+// segui" (postback, chega via webhook messaging_postbacks). Textos/rótulos
+// abaixo são o padrão do sistema — usado pelo switch da regra (que não tem
+// bloco pra guardar customização) e como fallback pro bloco Seguir do
+// funil quando um campo fica em branco (ver Fase 9.5, followGateContentFromNode).
+interface FollowGateContent {
+  first: string;
+  retry: string;
+  confirmLabel: string;
+  profileLabel: string;
+}
+
 const GATE_CONFIRM_PAYLOAD = "gate:confirm_follow";
-const GATE_TEXT_FIRST =
-  'Falta só um passo: me segue aqui no perfil 👀\n\nAssim que seguir, clica em "Já segui" que eu libero sua mensagem na hora 👇';
-const GATE_TEXT_RETRY = "Ainda não te encontrei seguindo 👀 segue rapidinho que eu libero na hora!";
+
+const DEFAULT_GATE_CONTENT: FollowGateContent = {
+  first: 'Falta só um passo: me segue aqui no perfil 👀\n\nAssim que seguir, clica em "Já segui" que eu libero sua mensagem na hora 👇',
+  retry: "Ainda não te encontrei seguindo 👀 segue rapidinho que eu libero na hora!",
+  confirmLabel: "Já segui 💙",
+  profileLabel: "Ver perfil 👀",
+};
+
+// Monta o conteúdo de um bloco Seguir do funil — cada campo em branco cai
+// pro padrão do sistema.
+function followGateContentFromNode(node: { message: string | null; followGateConfig: unknown }): FollowGateContent {
+  const config = (node.followGateConfig as { retry?: string; confirmLabel?: string; profileLabel?: string } | null) ?? {};
+  return {
+    first: node.message?.trim() || DEFAULT_GATE_CONTENT.first,
+    retry: config.retry?.trim() || DEFAULT_GATE_CONTENT.retry,
+    confirmLabel: config.confirmLabel?.trim() || DEFAULT_GATE_CONTENT.confirmLabel,
+    profileLabel: config.profileLabel?.trim() || DEFAULT_GATE_CONTENT.profileLabel,
+  };
+}
 
 // Registra o lead como "aguardando seguir" (mesma proteção de dedupe por
 // ruleId+commentId de sempre — reentrega do mesmo webhook não reenvia o
@@ -541,11 +567,16 @@ async function processPostback(igBusinessAccountId: string, senderId: string, pa
 // repetição) e devolve false — chamador decide o que fazer (nada, sem
 // limite de tentativas). Compartilhado pelos dois lugares onde alguém pode
 // estar esperando "Já segui": gate de entrada e bloco Seguir no funil.
-async function checkFollowOrRetry(connection: { accessToken: string }, igBusinessAccountId: string, igUserId: string): Promise<boolean> {
+async function checkFollowOrRetry(
+  connection: { accessToken: string },
+  igBusinessAccountId: string,
+  igUserId: string,
+  content: FollowGateContent = DEFAULT_GATE_CONTENT
+): Promise<boolean> {
   const following = await fetchIsUserFollowing(connection.accessToken, igUserId);
   if (!following) {
     try {
-      await sendFollowGateMessage(connection.accessToken, igBusinessAccountId, igUserId, "retry");
+      await sendFollowGateMessage(connection.accessToken, igBusinessAccountId, igUserId, "retry", content);
     } catch (err) {
       console.error("[instagram-webhook] falha ao reenviar aviso de seguir:", err);
     }
@@ -577,7 +608,7 @@ async function resolveFollowGate(igBusinessAccountId: string, igUserId: string):
   const node = await db.query.instagramFunnelNodes.findFirst({ where: eq(instagramFunnelNodes.id, session.currentNodeId) });
   if (node?.type !== "follow_gate") return; // sessão pendente é de outro bloco (Condição/Botões) — ignora
 
-  if (!(await checkFollowOrRetry(connection, igBusinessAccountId, igUserId))) return;
+  if (!(await checkFollowOrRetry(connection, igBusinessAccountId, igUserId, followGateContentFromNode(node)))) return;
 
   await db.delete(instagramFunnelSessions).where(eq(instagramFunnelSessions.id, session.id));
   const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, session.currentNodeId) });
@@ -811,7 +842,7 @@ async function advanceFunnel(
       return;
     }
     try {
-      await sendFollowGateMessage(accessToken, igBusinessAccountId, igUserId, "first");
+      await sendFollowGateMessage(accessToken, igBusinessAccountId, igUserId, "first", followGateContentFromNode(node));
     } catch (err) {
       console.error("[instagram-webhook] falha ao enviar aviso de seguir do funil:", err);
       return;
@@ -967,16 +998,17 @@ async function sendFollowGateMessage(
   accessToken: string,
   igBusinessAccountId: string,
   igUserId: string,
-  variant: "first" | "retry"
+  variant: "first" | "retry",
+  content: FollowGateContent = DEFAULT_GATE_CONTENT
 ): Promise<void> {
   const ownUsername = await fetchInstagramUsername(accessToken, igBusinessAccountId);
   const buttons: TemplateButton[] = [];
   if (ownUsername) {
-    buttons.push({ type: "web_url", title: "Ver perfil 👀", url: `https://www.instagram.com/${ownUsername}` });
+    buttons.push({ type: "web_url", title: content.profileLabel.slice(0, 20), url: `https://www.instagram.com/${ownUsername}` });
   }
-  buttons.push({ type: "postback", title: "Já segui 💙", payload: GATE_CONFIRM_PAYLOAD });
+  buttons.push({ type: "postback", title: content.confirmLabel.slice(0, 20), payload: GATE_CONFIRM_PAYLOAD });
 
-  await sendButtonTemplate(accessToken, igBusinessAccountId, igUserId, variant === "first" ? GATE_TEXT_FIRST : GATE_TEXT_RETRY, buttons);
+  await sendButtonTemplate(accessToken, igBusinessAccountId, igUserId, variant === "first" ? content.first : content.retry, buttons);
 }
 
 async function sendFileMessage(accessToken: string, igBusinessAccountId: string, igUserId: string, fileUrl: string): Promise<void> {

@@ -135,6 +135,22 @@ criar/editar regra (funciona pra Comentário e Resposta a story).
   regra (e entra no funil, se configurado); o lead vira "enviado" em
   Leads/Contatos.
 
+## Adendo 4 — bloco "Seguir" do funil ganhou texto/botões editáveis
+
+Reverte parte da decisão original (texto fixo do sistema): agora o
+**bloco do funil** (`follow_gate`) tem texto próprio (1ª vez e
+repetição) e rótulo dos dois botões, editável via clique duplo — igual
+aos outros blocos. Campo em branco cai pro texto/rótulo padrão do
+sistema (`DEFAULT_GATE_CONTENT` em `instagram-webhook.ts`).
+
+O **switch da regra** ("Exigir seguir antes de responder") continua com
+o texto fixo — não tem bloco pra guardar customização, fora de escopo
+por enquanto.
+
+Schema: `instagram_funnel_nodes.follow_gate_config` (jsonb) guarda
+`{ retry, confirmLabel, profileLabel }`; o texto da 1ª vez reaproveita a
+coluna `message` já existente (mesmo padrão de Mensagem/Botões).
+
 ## Adendo — bloco "Seguir" no editor de funil
 
 Pedido do usuário depois da primeira entrega: além do switch por regra

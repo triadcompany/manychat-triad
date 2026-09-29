@@ -180,6 +180,11 @@ export const instagramFunnelNodes = pgTable("instagram_funnel_nodes", {
   // botões e digita em vez de tocar). Limite da Meta: até 13, 20 caracteres
   // por rótulo — validado no editor e truncado defensivamente no envio.
   quickReplyOptions: jsonb("quick_reply_options").notNull().default([]),
+  // só type='follow_gate' — retry (texto de repetição), confirmLabel/
+  // profileLabel (rótulo dos botões "Já segui"/"Ver perfil"). Texto da 1ª
+  // vez reaproveita a coluna `message` acima. Qualquer campo vazio cai pro
+  // texto/rótulo padrão do sistema (ver DEFAULT_GATE_CONTENT em instagram-webhook.ts).
+  followGateConfig: jsonb("follow_gate_config").notNull().default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
