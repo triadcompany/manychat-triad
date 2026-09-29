@@ -1,7 +1,8 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { Home, Users, Zap, MessageCircle, Settings, LogOut } from "lucide-react";
+import { Home, Users, Zap, MessageCircle, Settings, LogOut, Sun, Moon, Monitor } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logout } from "@/server/session";
+import { useTheme, type Theme } from "@/lib/theme";
 
 const navItems = [
   { to: "/admin/inicio", label: "Início", icon: Home },
@@ -44,7 +45,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="p-2 border-t border-border">
+        <div className="p-2 border-t border-border space-y-2">
+          <ThemeToggle />
           <button
             onClick={handleLogout}
             className="w-full flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
@@ -55,6 +57,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       <main className="flex-1 min-w-0">{children}</main>
+    </div>
+  );
+}
+
+const THEME_OPTIONS: { value: Theme; icon: typeof Sun; label: string }[] = [
+  { value: "light", icon: Sun, label: "Claro" },
+  { value: "dark", icon: Moon, label: "Escuro" },
+  { value: "system", icon: Monitor, label: "Sistema" },
+];
+
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  return (
+    <div className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+      {THEME_OPTIONS.map(({ value, icon: Icon, label }) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => setTheme(value)}
+          title={label}
+          aria-label={label}
+          className={cn(
+            "flex-1 flex items-center justify-center rounded px-2 py-1.5 transition-colors",
+            theme === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </button>
+      ))}
     </div>
   );
 }

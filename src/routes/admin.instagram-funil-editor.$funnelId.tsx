@@ -33,6 +33,7 @@ import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Spa
 import { toast } from "sonner";
 import { fetchFunnelGraph, saveFunnelGraph, fetchFunnels, testFunnel } from "@/server/instagram-funnel";
 import { fetchConversations } from "@/server/instagram-messages";
+import { useTheme } from "@/lib/theme";
 
 export const Route = createFileRoute("/admin/instagram-funil-editor/$funnelId")({
   head: () => ({ meta: [{ title: "Editor de Funil — Admin" }] }),
@@ -171,6 +172,7 @@ const nodeTypes = {
 function FunnelEditorPage() {
   const { funnelId } = useParams({ from: "/admin/instagram-funil-editor/$funnelId" });
   const queryClient = useQueryClient();
+  const { theme } = useTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loaded, setLoaded] = useState(false);
@@ -305,7 +307,7 @@ function FunnelEditorPage() {
           onNodeDoubleClick={(_, node) => { if (node.type !== "trigger") setEditingNode(node); }}
           nodeTypes={nodeTypes}
           fitView
-          colorMode="system"
+          colorMode={theme}
         >
           <Background />
           <Controls />
