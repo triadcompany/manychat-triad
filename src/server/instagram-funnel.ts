@@ -11,6 +11,7 @@ import {
   instagramFunnelEdges,
 } from "@/db/schema";
 import { requireOrgContext } from "@/server/session";
+import { runFunnelTest } from "@/server/instagram-webhook";
 
 // Contas conectadas via "Instagram Login" (sem Página do Facebook, nosso
 // caso) usam o host graph.instagram.com, não graph.facebook.com — e esses
@@ -518,4 +519,22 @@ export async function saveFunnelGraph(
   edges: { source_node_id: string; source_handle: string | null; target_node_id: string }[]
 ): Promise<void> {
   await _saveFunnelGraph({ data: { funnel_id: funnelId, nodes, edges } });
+}
+
+// "Testar funil" — manda pra um contato real (já com conversa aberta na
+// Caixa de Entrada) a partir do 1º bloco do funil, sem precisar de um
+// comentário/story de verdade.
+const _testFunnel = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ funnel_id: z.string(), ig_user_id: z.string() }))
+  .handler(async ({ data }): Promise<{ ok: boolean; error?: string }> => {
+    const { organizationId } = await requireOrgContext();
+    const funnel = await db.query.instagramFunnels.findFirst({
+      where: and(eq(instagramFunnels.id, data.funnel_id), eq(instagramFunnels.organizationId, organizationId)),
+    });
+    if (!funnel) throw new Error("Funil não encontrado.");
+    return runFunnelTest(organizationId, data.ig_user_id, data.funnel_id);
+  });
+
+export async function testFunnel(funnelId: string, igUserId: string): Promise<{ ok: boolean; error?: string }> {
+  return _testFunnel({ data: { funnel_id: funnelId, ig_user_id: igUserId } });
 }

@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -28,9 +29,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Sparkles, MousePointerClick, UserPlus } from "lucide-react";
+import { ArrowLeft, Zap, MessageSquare, GitBranch, Plus, X, Save, Paperclip, Sparkles, MousePointerClick, UserPlus, FlaskConical } from "lucide-react";
 import { toast } from "sonner";
-import { fetchFunnelGraph, saveFunnelGraph, fetchFunnels } from "@/server/instagram-funnel";
+import { fetchFunnelGraph, saveFunnelGraph, fetchFunnels, testFunnel } from "@/server/instagram-funnel";
+import { fetchConversations } from "@/server/instagram-messages";
 
 export const Route = createFileRoute("/admin/instagram-funil-editor/$funnelId")({
   head: () => ({ meta: [{ title: "Editor de Funil — Admin" }] }),
@@ -165,6 +167,7 @@ function FunnelEditorPage() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [loaded, setLoaded] = useState(false);
   const [editingNode, setEditingNode] = useState<Node | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
 
   const { data: funnels = [] } = useQuery({ queryKey: ["instagram-funnels"], queryFn: fetchFunnels });
   const funnelName = funnels.find((f) => f.id === funnelId)?.name ?? "Funil";
@@ -264,6 +267,9 @@ function FunnelEditorPage() {
         <Button size="sm" variant="outline" className="gap-1.5" onClick={() => addNode("follow_gate")}>
           <Plus className="h-3.5 w-3.5" /> Seguir
         </Button>
+        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setTestOpen(true)}>
+          <FlaskConical className="h-3.5 w-3.5" /> Testar funil
+        </Button>
         <Button size="sm" className="gap-1.5" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="h-3.5 w-3.5" /> {saveMutation.isPending ? "Salvando..." : "Salvar"}
         </Button>
@@ -315,7 +321,76 @@ function FunnelEditorPage() {
           />
         )}
       </Dialog>
+
+      <Dialog open={testOpen} onOpenChange={setTestOpen}>
+        <TestFunnelDialog funnelId={funnelId} onClose={() => setTestOpen(false)} />
+      </Dialog>
     </div>
+  );
+}
+
+// Manda o funil de verdade pra um contato que já tem conversa aberta (janela
+// de 24h) — sem precisar de um comentário/story real. Ver runFunnelTest em
+// instagram-webhook.ts.
+function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: () => void }) {
+  const [igUserId, setIgUserId] = useState("");
+
+  const { data: conversations = [], isLoading } = useQuery({ queryKey: ["instagram-conversations"], queryFn: fetchConversations });
+
+  const testMutation = useMutation({
+    mutationFn: () => testFunnel(funnelId, igUserId),
+    onSuccess: (result) => {
+      if (result.ok) {
+        toast.success("Teste enviado — confere o Direct do contato escolhido.");
+        onClose();
+      } else {
+        toast.error(result.error ?? "Erro ao testar o funil.");
+      }
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Erro ao testar o funil"),
+  });
+
+  return (
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Testar funil</DialogTitle>
+      </DialogHeader>
+      <div className="py-2 space-y-3">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Carregando conversas...</p>
+        ) : conversations.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nenhuma conversa ainda pra testar. Precisa de um contato que já tenha trocado Direct com a conta
+            conectada (a janela de 24h precisa estar aberta) — manda um Direct qualquer pra sua própria conta e ele
+            aparece aqui.
+          </p>
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              <Label>Contato</Label>
+              <Select value={igUserId} onValueChange={setIgUserId}>
+                <SelectTrigger><SelectValue placeholder="Escolha um contato" /></SelectTrigger>
+                <SelectContent>
+                  {conversations.map((c) => (
+                    <SelectItem key={c.ig_user_id} value={c.ig_user_id}>
+                      {c.ig_username ? `@${c.ig_username}` : c.ig_user_id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Manda o funil de verdade a partir do bloco Gatilho pra esse contato — não cria lead na aba Leads.
+            </p>
+          </>
+        )}
+      </div>
+      <DialogFooter>
+        <Button onClick={() => testMutation.mutate()} disabled={!igUserId || testMutation.isPending}>
+          {testMutation.isPending ? "Enviando..." : "Enviar teste"}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
   );
 }
 

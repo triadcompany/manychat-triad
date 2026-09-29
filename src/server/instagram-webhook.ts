@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { and, eq } from "drizzle-orm";
+import { createServerOnlyFn } from "@tanstack/react-start";
 import { db } from "@/db/client";
 import {
   appConfig,
@@ -406,6 +407,82 @@ async function upsertFunnelSession(
     });
 }
 
+// "Testar funil" no editor — manda pra um contato real (já com janela de
+// 24h aberta, escolhido dentre as conversas existentes na Caixa de
+// Entrada) a partir do 1º bloco ligado no Gatilho, sem precisar de um
+// comentário/story de verdade. Sempre por DM comum (nunca resposta
+// privada — não tem comentário nenhum aqui), então sem a restrição de "1
+// mensagem só". Cria um lead marcado como teste (sem regra, fica fora da
+// aba Leads) só pra pendurar a sessão do funil, do mesmo jeito que uma
+// entrada de verdade usaria.
+//
+// createServerOnlyFn (não é RPC) evita que o import-protection do TanStack
+// Start bloqueie este arquivo quando importado por instagram-funnel.ts, que
+// também roda no client (mesmo motivo de logMessage em instagram-messages.ts).
+export const runFunnelTest = createServerOnlyFn(async (
+  organizationId: string,
+  igUserId: string,
+  funnelId: string
+): Promise<{ ok: boolean; error?: string }> => {
+  const connection = await db.query.instagramConnections.findFirst({
+    where: and(eq(instagramConnections.organizationId, organizationId), eq(instagramConnections.active, true)),
+  });
+  if (!connection) return { ok: false, error: "Conecte o Instagram antes de testar." };
+
+  const firstStep = await resolveFirstFunnelStep(funnelId);
+  if (!firstStep) return { ok: false, error: "Esse funil não tem nenhum bloco ligado ao Gatilho ainda." };
+
+  const [testLead] = await db
+    .insert(instagramFunnelLeads)
+    .values({
+      commentId: `test:${crypto.randomUUID()}`,
+      igUserId,
+      igUsername: null,
+      commentText: "[teste manual do funil]",
+      status: "sent",
+      isTest: true,
+    })
+    .returning({ id: instagramFunnelLeads.id });
+
+  const isQuickReplyFirst = firstStep.node.type === "quick_reply";
+  const isMessageFirst = firstStep.node.type === "message" && !!firstStep.node.message && !firstStep.node.fileBase64;
+
+  if (isQuickReplyFirst || isMessageFirst) {
+    try {
+      if (isQuickReplyFirst) {
+        const options = (firstStep.node.quickReplyOptions as { id: string; label: string }[] | null) ?? [];
+        await sendDirectMessageWithQuickReplies(
+          connection.accessToken,
+          connection.instagramBusinessAccountId,
+          igUserId,
+          firstStep.node.message ?? "",
+          options
+        );
+        await logMessage(organizationId, igUserId, "out", firstStep.node.message ?? "", null);
+        await upsertFunnelSession(organizationId, igUserId, funnelId, firstStep.node.id, testLead.id);
+      } else {
+        await sendDirectMessage(connection.accessToken, connection.instagramBusinessAccountId, igUserId, firstStep.node.message!);
+        await logMessage(organizationId, igUserId, "out", firstStep.node.message!, null);
+        const edge = await db.query.instagramFunnelEdges.findFirst({ where: eq(instagramFunnelEdges.sourceNodeId, firstStep.node.id) });
+        if (edge) {
+          await advanceFunnel(connection.accessToken, connection.instagramBusinessAccountId, igUserId, funnelId, testLead.id, edge.targetNodeId);
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await db.update(instagramFunnelLeads).set({ status: "failed", errorMessage: message }).where(eq(instagramFunnelLeads.id, testLead.id));
+      return { ok: false, error: message };
+    }
+  } else {
+    // Condição/Seguir/Mensagem só com anexo como 1º bloco — advanceFunnel já
+    // sabe mandar cada um; erro vira log no servidor, não é capturado aqui
+    // (mesmo comportamento de uma entrada de verdade nesse mesmo caso).
+    await advanceFunnel(connection.accessToken, connection.instagramBusinessAccountId, igUserId, funnelId, testLead.id, firstStep.node.id);
+  }
+
+  return { ok: true };
+});
+
 // Fase 9 — gate "seguir antes de responder". Payload fixo do botão "Já
 // segui" (postback, chega via webhook messaging_postbacks).
 const GATE_CONFIRM_PAYLOAD = "gate:confirm_follow";
@@ -524,7 +601,7 @@ async function resolveEntryFollowGate(
   await db.delete(instagramFollowGates).where(eq(instagramFollowGates.id, gate.id));
 
   const lead = await db.query.instagramFunnelLeads.findFirst({ where: eq(instagramFunnelLeads.id, gate.leadId) });
-  if (!lead) return;
+  if (!lead?.ruleId) return; // gate de entrada sempre tem regra por trás — nulo só acontece em lead de teste
   const rule = await db.query.instagramFunnelRules.findFirst({ where: eq(instagramFunnelRules.id, lead.ruleId) });
   if (!rule) return;
 

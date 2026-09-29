@@ -121,15 +121,19 @@ export const instagramFunnelLeads = pgTable(
   "instagram_funnel_leads",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    ruleId: uuid("rule_id")
-      .notNull()
-      .references(() => instagramFunnelRules.id, { onDelete: "cascade" }),
+    // Nulo só pra lead de teste (botão "Testar funil" no editor) — sem
+    // regra por trás, só serve pra pendurar a sessão/estado do teste.
+    ruleId: uuid("rule_id").references(() => instagramFunnelRules.id, { onDelete: "cascade" }),
     commentId: text("comment_id").notNull(),
     igUsername: text("ig_username"),
     igUserId: text("ig_user_id").notNull(),
     commentText: text("comment_text").notNull(),
-    status: text("status").notNull(), // sent | failed
+    status: text("status").notNull(), // sent | failed | pending_follow
     errorMessage: text("error_message"),
+    // Marca lead criado por "Testar funil" — fica de fora da aba Leads (join
+    // com a regra já exclui, já que ruleId é nulo) e não deveria contar como
+    // interação real em relatórios futuros.
+    isTest: boolean("is_test").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [

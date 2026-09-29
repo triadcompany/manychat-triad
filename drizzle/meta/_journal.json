@@ -50,6 +50,13 @@
       "when": 1790640583832,
       "tag": "0006_normal_wong",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790641390833,
+      "tag": "0007_nostalgic_vargas",
+      "breakpoints": true
     }
   ]
 }
