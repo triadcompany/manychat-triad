@@ -384,7 +384,14 @@ function formatRelativeTime(iso: string): string {
 function TestFunnelDialog({ funnelId, onClose }: { funnelId: string; onClose: () => void }) {
   const [igUserId, setIgUserId] = useState("");
 
-  const { data: allConversations = [], isLoading } = useQuery({ queryKey: ["instagram-conversations"], queryFn: fetchConversations });
+  // A janela de 24h expira rápido — nunca reaproveita cache velho (o padrão
+  // global fica "fresco" por 5min) quando esse diálogo abre.
+  const { data: allConversations = [], isLoading } = useQuery({
+    queryKey: ["instagram-conversations"],
+    queryFn: fetchConversations,
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
   // Filtra pela última mensagem que a PESSOA mandou (não conta envio nosso,
   // que não abre janela nenhuma) — ver last_inbound_at em instagram-messages.ts.
   const conversations = allConversations.filter((c) => c.last_inbound_at && isWithinWindow(c.last_inbound_at));
