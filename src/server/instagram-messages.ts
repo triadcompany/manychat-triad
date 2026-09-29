@@ -1,5 +1,5 @@
 import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
 import { instagramConnections, instagramConversations, instagramMessages, instagramFunnelSessions } from "@/db/schema";
@@ -67,27 +67,37 @@ export interface ConversationRow {
 
 const _fetchConversations = createServerFn({ method: "GET" }).handler(async (): Promise<ConversationRow[]> => {
   const { organizationId } = await requireOrgContext();
-  const rows = await db
-    .select({
-      id: instagramConversations.id,
-      igUserId: instagramConversations.igUserId,
-      igUsername: instagramConversations.igUsername,
-      lastMessagePreview: instagramConversations.lastMessagePreview,
-      lastMessageAt: instagramConversations.lastMessageAt,
-      lastInboundAt: sql<string | null>`(
-        select max(m.created_at) from instagram_messages m
-        where m.conversation_id = ${instagramConversations.id} and m.direction = 'in'
-      )`,
-    })
+  const conversations = await db
+    .select()
     .from(instagramConversations)
     .where(eq(instagramConversations.organizationId, organizationId))
     .orderBy(desc(instagramConversations.lastMessageAt));
-  return rows.map((r) => ({
+  if (conversations.length === 0) return [];
+
+  // Última mensagem que a PESSOA mandou por conversa — busca à parte e
+  // agrupa em JS (mais simples e seguro que subquery correlacionada em SQL
+  // bruto, mesmo padrão já usado em instagram-contacts.ts pras tags).
+  const inboundRows = await db
+    .select({ conversationId: instagramMessages.conversationId, createdAt: instagramMessages.createdAt })
+    .from(instagramMessages)
+    .where(
+      and(
+        inArray(instagramMessages.conversationId, conversations.map((c) => c.id)),
+        eq(instagramMessages.direction, "in")
+      )
+    );
+  const lastInboundByConversation = new Map<string, string>();
+  for (const row of inboundRows) {
+    const current = lastInboundByConversation.get(row.conversationId);
+    if (!current || row.createdAt > current) lastInboundByConversation.set(row.conversationId, row.createdAt);
+  }
+
+  return conversations.map((r) => ({
     ig_user_id: r.igUserId,
     ig_username: r.igUsername,
     last_message_preview: r.lastMessagePreview,
     last_message_at: r.lastMessageAt,
-    last_inbound_at: r.lastInboundAt,
+    last_inbound_at: lastInboundByConversation.get(r.id) ?? null,
   }));
 });
 
